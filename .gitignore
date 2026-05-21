@@ -1,0 +1,21 @@
+# File Extensions
+*.vtu
+*.vtp
+*.sharpy
+*.h5
+*.csv
+*.log
+*.dat
+*.txt
+.DS_Store
+
+# Folders
+AR16wing/
+H2ALE/
+HALE/
+HXHALE/
+MultibodyFLEXOP/
+PazyWing/
+StaticCantilever/
+SuperFLEXOP/
+XHALE/

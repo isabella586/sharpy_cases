@@ -5,6 +5,7 @@ import os
 import sharpy.utils.algebra as algebra
 import llta_geometry as llta
 import math
+import sharpy.sharpy_main 
 
 case_name = 'llta'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
@@ -12,22 +13,22 @@ route = os.path.dirname(os.path.realpath(__file__)) + '/'
 # EXECUTION
 flow = ['BeamLoader',
         'AerogridLoader',
-        # 'NonLinearStatic',
-        # 'StaticUvlm',
-        # 'StaticTrim',
-        'StaticCoupled',
-        'BeamLoads',
-        'AerogridPlot',
-        'BeamPlot',
-        # 'DynamicCoupled',
-        # 'Modal',
-        # 'LinearAssember',
-        # 'AsymptoticStability',
+        #'NonLinearStatic',
+        #'StaticUvlm',
+        'StaticTrim',           # Longitudinal static trim
+        #'StaticCoupled',       # Static coupled solver with GECM and UVLM. This needs calling when running DynamicCoupled (ref dynamiccoupled.py solver script)
+        'BeamLoads',            # Computation of beam loads and strains for static
+        'AerogridPlot',         # Output of aero grid
+        'BeamPlot',             # Beam structure and output data for static
+        #'DynamicCoupled'       # Uses BeamLoads, BeamPlot and AerogridPlot at each timestep
+        'Modal',
+        #'LinearAssember',
+        #'AsymptoticStability',
+        #'SaveData'
         ]
 
 # if free_flight is False, the motion of the centre of the wing is prescribed.
-# Not required
-free_flight = False #This is clamp on/off
+free_flight = True #This is clamp on/off
 if not free_flight:
     case_name += '_prescribed'
     amplitude = 0 * np.pi / 180
@@ -37,79 +38,109 @@ if not free_flight:
 # FLIGHT CONDITIONS
 # the simulation is set such that the aircraft flies at a u_inf velocity while
 # the air is calm.
-u_inf =10 # from provided .ulg, speed approx. 8-10 m/s so keeping 10 for now
-rho = 1.225 # standard air pressure
+u_inf = 6                                               # Freestream velocity (SI units)
+rho = 1.225                                             # Density (SI units) - 400ft flight test is 1.231 kg/m3 density. Sea level 1.225
 
-# trim sigma = 1.5
-alpha = llta.alpha_deg * np.pi / 180 
-beta = 0 # Side slip angle
-roll = 0 # Wings level
-gravity = 'on' 
+# trim sigma = 1.5                      
+alpha = llta.alpha_deg * np.pi / 180                    # Angle of attack (rad)
+beta = 0 # Side slip angle                              # Side slip angle (rad)
+roll = 0 # Wings level                                  # Initial/static roll angle (rad) - wings level
+gravity = True
 
-cs_deflection = 0 # -2.08 * np.pi / 180 #Control surface delfection - set to 0 for now
-rudder_static_deflection = 0.0
-rudder_step = 0.0 * np.pi / 180 # Step input to rudder (fin-tail coupling?)
-thrust = 1 #6.16
-sigma = 3 # Make it 1 - stiffness scaling factor (1.5 is from original case)
-lambda_dihedral = llta.lambda_dihedral * np.pi / 180 # Dihedral angle
+cs_deflection = -2.08 * np.pi / 180                     # [NEEDS WORK] Control surface delfection
+rudder_static_deflection = 0.0                          # Needed?
+rudder_step = 0.0 * np.pi / 180                         # Needed? Step input to rudder (fin-tail coupling?)
+thrust = 6.16
+sigma = 1                                               # Stiffness scaling factor. Previously 1.5
+lambda_dihedral = llta.lambda_dihedral * np.pi / 180    # Dihedral angle (rad)
+alpha_zero_lift = llta.zero_alpha * np.pi / 180        # Zero alpha, nose-down = negative in SHARPy convetion
 
 # gust settings
-gust_intensity = 0.5 #- 0.5 set to 0 for now
-gust_length = 1 * u_inf
+gust_intensity = 0.4 
+gust_length = 0.5 * u_inf
 gust_offset = 0.5 * u_inf
 
 # numerics
-n_step = 10 #Set to default (0), was 5. Residual still high (static equations did not converge). Will ramp up force applied over defined step count
-structural_relaxation_factor = 0.2 # Definition used in Static coupled solver settings
-relaxation_factor = 0.2 # Was set at 0.35, Definition used in Dynamic coupled solver settings
+n_step = 5                              # Changed Ramp up force applied over defined step count (previously 1)
+structural_relaxation_factor = 0.6      # Changed Used in Static coupled solver settings (previously 0.3)
+relaxation_factor = 0.35                # Changed Used in Dynamic coupled solver settings (previously 0.2)
 tolerance = 1e-6
-fsi_tolerance = 1e-4 # More lenient convergence threshold than the default (1e-5)
+fsi_tolerance = 1e-4                    # More lenient convergence threshold than the default (1e-5)
 
 num_cores = 2
 
 # MODEL GEOMETRY
-# beam
-span_main = llta.span_main
-lambda_main = llta.lambda_main
-ea_main = llta.ea_main
+# aero
+chord_main = llta.chord_main 
+chord_tail = llta.chord_tail
+chord_fin = llta.chord_fin 
 
-ea = llta.ea
-ga = llta.ga
-gj = llta.gj
-eiy = llta.eiy
-eiz = llta.eiz
+# beam
+span_main = llta.span_main / 2  # Semi-span
+lambda_main = llta.lambda_main
+ea_main = llta.ea_main          # [QUESTION] Position of elastic axis (as % of chord?) 
+
+ea = llta.ea                            # Axial stiffness
+ga = llta.ga                            # Shear stiffness
+gj = llta.gj                            # Torsional stiffness
+eiy = llta.eiy                          # Bending stiffness around the flapwise diration
+eiz = llta.eiz                          # Bending stiffness around the edgewise direction
 m_bar_main = llta.m_bar_main
-j_bar_main = 0.075 # Not defined by Voltitude - leave for now
+j_bar_main = 0.075                      # Not defined by Voltitude - leave for now
+ccg_main = (llta.cg_offset * chord_main) - (ea_main * chord_main) # Added during investigation of mass matrix and missing coupling terms. This is the CG offset from the elastic axis.
 
 length_fuselage = llta.length_fuselage
-offset_fuselage = 0
-sigma_fuselage = 1 # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
+offset_fuselage = 0                     # This is a fuselage that is angled - currently not needed
+sigma_fuselage = 1                      # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
 m_bar_fuselage = llta.m_bar_fuselage
-j_bar_fuselage = 0.08 # Not defined by Voltitude - leave for now
+j_bar_fuselage = 0.08                   # Not defined by Voltitude - leave for now
 
 span_tail = llta.span_tail
 ea_tail = llta.ea_tail
 fin_height = llta.fin_height
 ea_fin = llta.ea_fin
-sigma_tail = 1 # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
+sigma_tail = 1                          # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
 m_bar_tail = llta.m_bar_tail
-j_bar_tail = 0.08 # Not defined by Voltitude - leave for now
+j_bar_tail = 0.08                       # Not defined by Voltitude - leave for now
 
 # lumped masses
-n_lumped_mass = 1 #1
+n_lumped_mass = 5
 lumped_mass_nodes = np.zeros((n_lumped_mass,), dtype=int)
-print("These are the lumped mass nodes",lumped_mass_nodes) #Added 
 lumped_mass = np.zeros((n_lumped_mass,))
-lumped_mass[0] = 0
-print("These are the lumped masses",lumped_mass)
-lumped_mass_inertia = np.zeros((n_lumped_mass, 3, 3))
 lumped_mass_position = np.zeros((n_lumped_mass, 3))
-print("These are the lumped mass positions wrt their nodes", lumped_mass_position)
+lumped_mass_inertia = np.zeros((n_lumped_mass, 3, 3))
 
-# aero
-chord_main = llta.chord_main #1.0
-chord_tail = llta.chord_tail #0.5
-chord_fin = llta.chord_fin #0.5
+# lumped masses - front fuselage (node 0)
+lumped_mass_nodes[0] = 0 # attached to node 0
+lumped_mass[0] = llta.mass_prop + llta.mass_batteries + llta.mass_pixhawk + llta.mass_additional # Changed (prop, batteriesm, pixhawk and 0.54 discrepancy)
+lumped_mass_position[0] = llta.front_fuselage_pos # Offset position of payload (forward of node 0, so -ve y axis), average of positions
+lumped_mass_inertia[0] = np.diag([0.001179, 0.005401, 0.005436]) # Combined forward fuselage — propeller + battery + electronics. Parallel axis theorem applied to combined CG at x = -0.2384 m
+
+# lumped masses - right wing (node 4 and 16)
+lumped_mass_nodes[1] = 4 # attached to node 4
+lumped_mass[1] = llta.mass_launch_handle
+lumped_mass_position[1] = llta.right_handle_pos # Material FoR, inwards of node 4, -ve local x axis
+lumped_mass_inertia[1] = np.diag([1.814e-05, 2.294e-06, 1.814e-05]) # Launch handle (cylinder, spanwise axis) - negligable, not expected to affect results
+
+lumped_mass_nodes[2] = 16 # attached to node 16
+lumped_mass[2] = llta.mass_camera
+lumped_mass_position[2] = llta.camera_pos
+lumped_mass_inertia[2] = np.diag([3.143e-06, 3.780e-06, 4.800e-06]) # Camera (box 40x35x25 mm) - negligable, not expected to affect results
+
+# lumped masses - left wing (node 20 and 32)
+lumped_mass_nodes[3] = 20 # attached to node 20
+lumped_mass[3] = llta.mass_launch_handle
+lumped_mass_position[3] = llta.left_handle_pos # Material FoR, inwards of node 20, -ve local x axis
+lumped_mass_inertia[3] = np.diag([1.814e-05, 2.294e-06, 1.814e-05]) # Launch handle (mirror of [1]) - negligable, not expected to affect results
+
+lumped_mass_nodes[4] = 32 # attached to node 32
+lumped_mass[4] = llta.mass_camera_counter
+lumped_mass_position[4] = llta.camera_counter_pos
+lumped_mass_inertia[4] = np.diag([3.143e-06, 3.780e-06, 4.800e-06]) # Same as camera estimates
+
+#print("These are the lumped masses",lumped_mass)
+#print("These are the lumped mass nodes",lumped_mass_nodes) #Added
+#print("These are the lumped mass positions wrt their nodes", lumped_mass_position)
 
 # DISCRETISATION
 # spatial discretisation
@@ -124,42 +155,10 @@ n_elem_fuselage = int(2 * n_elem_multiplier)
 n_surfaces = 5
 
 # temporal discretisation
-physical_time = 30
-tstep_factor = 0.5 #From line below, this is the only variable that makes sense to change, was 1.
-dt = 1.0 / m / u_inf * tstep_factor #This is what I should investigate more based on Kelvin message about structural solver (05-03-2025)
+physical_time = 1 #30
+tstep_factor = 0.75 #From line below, this is the only variable that makes sense to change, was 1.
+dt = chord_main / (m * u_inf * tstep_factor)  # Updated so timestep is shedding of one chord length into wake
 n_tstep = round(physical_time / dt)
-
-"""
-# Assign lumped masses to nodes
-
-#First main elements
-#TO DO: Make this a for loop, increasing in node number?
-#for mass_node in lumped_mass_nodes:
-#lumped_mass_nodes[mass_node] = math.ceil((geometry.lumped_mass_positions_main[mass_node]/(span_main/2))*n_elem_main)
-#lumped_mass[mass_node] = geometry.lumped_mass_kg[mass_node]
-
-#For now:
-#Right wing, launch handle
-lumped_mass_nodes[0] = math.ceil((geometry.lumped_mass_positions_main[0]/(span_main/2))*n_elem_main)
-lumped_mass[0] = geometry.lumped_mass_kg[0]
-
-#Right wing, camera counter balance (no sweep accounted for here)
-lumped_mass_nodes[1] = math.ceil((geometry.lumped_mass_positions_main[1]/(span_main/2))*n_elem_main)
-lumped_mass[1] = geometry.lumped_mass_kg[1]
-
-#Left wing, launch handle
-#TO DO: Hard coding in assigned node - need to fix so it changes with discretisation
-lumped_mass_nodes[2] = 27 #math.ceil((geometry.lumped_mass_positions_main[2]/(span_main/2))*n_elem_main)
-lumped_mass[2] = geometry.lumped_mass_kg[2]
-
-#Left wing, camera (no sweep accounted for here)
-#TO DO: Hard coding in assigned node - need to fix so it changes with discretisation
-lumped_mass_nodes[3] = 36 #math.ceil((geometry.lumped_mass_positions_main[3]/(span_main/2))*n_elem_main)
-lumped_mass[3] = geometry.lumped_mass_kg[3]
-
-print("These are the assigned lumped mass nodes", lumped_mass_nodes)
-print("These are the assigned lumped masses", lumped_mass)
-"""
 
 # END OF INPUT-----------------------------------------------------------------
 
@@ -170,16 +169,8 @@ span_main2 = lambda_main * span_main
 
 n_elem_main1 = round(n_elem_main * (1 - lambda_main))
 n_elem_main2 = n_elem_main - n_elem_main1
-print("Number of elements for span main 1:", n_elem_main1)
-print("Number of elements for span main 2:", n_elem_main2)
-
-#length_fuselage1 = (1.0 - lambda_main) * length_fuselage #Using lambda_main as ratio for now (see if I can get wings in the middle)
-#length_fuselage2 = lambda_main * length_fuselage
-
-#n_elem_fuselage1 = round(n_elem_fuselage * (1 - lambda_main))
-#n_elem_fuselage2 = n_elem_fuselage - n_elem_fuselage1
-#print("Number of elements for fuselage 1:", n_elem_fuselage1)
-#print("Number of elements for fuselage 2:", n_elem_fuselage2)
+#print("Number of elements for span main 1:", n_elem_main1)
+#print("Number of elements for span main 2:", n_elem_main2)
 
 # total number of elements
 n_elem = 0
@@ -188,19 +179,15 @@ n_elem += n_elem_main2 + n_elem_main2
 n_elem += n_elem_fuselage
 n_elem += n_elem_fin
 n_elem += n_elem_tail + n_elem_tail
-print("Total elements:", n_elem)
+#print("Total elements:", n_elem)
 
 # number of nodes per part
 n_node_main1 = n_elem_main1 * (n_node_elem - 1) + 1
-#print("Number of nodes for main_elem 1 (inner right wing)", n_node_main1)
+print("Number of nodes for main_elem 1 (inner right wing)", n_node_main1)
 n_node_main2 = n_elem_main2 * (n_node_elem - 1) + 1
 n_node_main = n_node_main1 + n_node_main2 - 1
 n_node_fuselage = n_elem_fuselage * (n_node_elem - 1) + 1
-#print("This is the number of nodes for the fuselage",n_node_fuselage)
-#n_node_fuselage1 = n_elem_fuselage1 * (n_node_elem - 1) + 1
-#print("This is the number of nodes for fuselage1 (front)",n_node_fuselage1)
-#n_node_fuselage2 = n_elem_fuselage2 * (n_node_elem - 1) + 1
-#print("This is the number of nodes for fuselage2 (back to tail)",n_node_fuselage2)
+print("This is the number of nodes for the fuselage",n_node_fuselage)
 n_node_fin = n_elem_fin * (n_node_elem - 1) + 1
 n_node_tail = n_elem_tail * (n_node_elem - 1) + 1
 
@@ -208,7 +195,6 @@ n_node_tail = n_elem_tail * (n_node_elem - 1) + 1
 n_node = 0
 n_node += n_node_main1 + n_node_main1 - 1
 n_node += n_node_main2 - 1 + n_node_main2 - 1
-#n_node += n_node_fuselage1 - 1 + n_node_fuselage2 -1
 n_node += n_node_fuselage - 1
 n_node += n_node_fin - 1
 n_node += n_node_tail - 1
@@ -219,12 +205,22 @@ print("The total number of nodes is:", n_node)
 n_stiffness = 3
 base_stiffness_main = sigma * np.diag([ea, ga, ga, gj, eiy, eiz])
 base_stiffness_fuselage = base_stiffness_main.copy() * sigma_fuselage
-base_stiffness_fuselage[4, 4] = base_stiffness_fuselage[5, 5]
+base_stiffness_fuselage[4, 4] = base_stiffness_fuselage[5, 5] 
 base_stiffness_tail = base_stiffness_main.copy() * sigma_tail
-base_stiffness_tail[4, 4] = base_stiffness_tail[5, 5]
+base_stiffness_tail[4, 4] = base_stiffness_tail[5, 5] 
 
 n_mass = 3
+# This was the original (and only line) -> base_mass_main = np.diag([m_bar_main, m_bar_main, m_bar_main, j_bar_main, 0.5 * j_bar_main, 0.5 * j_bar_main])
+
+# Below section has been added during Mass Matrix Investigation
+    # 6×6 mass matrix to include chordwise CG offset
+    # SHARPy beam axis is y (spanwise). Chord lies in the x-z plane of the cross-section.
+    # Ccg is the chordwise offset of the CG from the beam reference line (positive aft).
+    # In SHARPy's cross-section frame, chordwise = local x, so the coupling term is m * ccg_main into position [0,4] and [4,0] (x-translation coupled with ry-rotation).
 base_mass_main = np.diag([m_bar_main, m_bar_main, m_bar_main, j_bar_main, 0.5 * j_bar_main, 0.5 * j_bar_main])
+#base_mass_main[0, 4] =  m_bar_main * ccg_main   # x-translation / pitch-rotation coupling
+#base_mass_main[4, 0] =  m_bar_main * ccg_main   # symmetric (matrix must be symmetric)
+
 base_mass_fuselage = np.diag([m_bar_fuselage,
                               m_bar_fuselage,
                               m_bar_fuselage,
@@ -367,12 +363,12 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
 
-    print("Connectivies array for inner RIGHT wing)", conn)
+    #print("Connectivies array for inner RIGHT wing)", conn)
     elem_stiffness[we:we + n_elem_main1] = 0
     elem_mass[we:we + n_elem_main1] = 0
     boundary_conditions[0] = 1
     # remember this is in B FoR
-    app_forces[0] = [0, thrust, 0, 0, 0, 0] # Changed for troubleshooting structural verification test ([0, thrust, 0, 0, 0, 0])
+    app_forces[0] = [0, thrust, 0, 0, 0, 0] 
     we += n_elem_main1
     wn += n_node_main1
 
@@ -386,7 +382,7 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
     
-    print("Connectivities array added to show outer RIGHT wing)",conn)
+    #print("Connectivities array added to show outer RIGHT wing)",conn)
     elem_stiffness[we:we + n_elem_main2] = 0
     elem_mass[we:we + n_elem_main2] = 0
     boundary_conditions[wn + n_node_main2 - 2] = -1
@@ -403,7 +399,7 @@ def generate_fem():
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     conn[we, 0] = 0
     
-    print("Connectivities array added to show inner LEFT wing)",conn)
+    #print("Connectivities array added to show inner LEFT wing)",conn)
     elem_stiffness[we:we + n_elem_main1] = 0
     elem_mass[we:we + n_elem_main1] = 0
     we += n_elem_main1
@@ -419,7 +415,7 @@ def generate_fem():
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [1.0, 0.0, 0.0]
     
-    print("Connectivities array added to show outer LEFT wing)",conn)
+    #print("Connectivities array added to show outer LEFT wing)",conn)
     elem_stiffness[we:we + n_elem_main2] = 0
     elem_mass[we:we + n_elem_main2] = 0
     boundary_conditions[wn + n_node_main2 - 2] = -1
@@ -445,18 +441,6 @@ def generate_fem():
     global end_of_fuselage_node
     end_of_fuselage_node = wn - 1
 
-    """
-    # front fuselage - copied code from fuselage bit above, changed the beam_number ID to 6
-    beam_number[we:we + n_elem_fuselage] = 6
-    x[wn:wn + n_node_fuselage - 1] = np.linspace(0.0, length_fuselage, n_node_fuselage)[1:]
-    z[wn:wn + n_node_fuselage - 1] = np.linspace(0.0, offset_fuselage, n_node_fuselage)[1:]
-    for ielem in range(n_elem_fuselage):
-        conn[we + ielem, :] = ((np.ones((3,)) * (we + ielem) * (n_node_elem - 1)) +
-                               [0, 2, 1])
-        for inode in range(n_node_elem):
-            frame_of_reference_delta[we + ielem, inode, :] = [0.0, -1.0, 0.0]
-    conn[we, 0] = 0 #TO DO: Hard coding in assigned node for where the wings are on the fuselage - need to fix so it changes with discretisation
-    """
     # fin
     beam_number[we:we + n_elem_fin] = 3
     x[wn:wn + n_node_fin - 1] = x[end_of_fuselage_node]
@@ -468,34 +452,13 @@ def generate_fem():
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
     conn[we, 0] = end_of_fuselage_node
 
-    print("Connectivities array added to show fin)",conn)
+    #print("Connectivities array added to show fin)",conn)
     elem_stiffness[we:we + n_elem_fin] = 2
     elem_mass[we:we + n_elem_fin] = 2
     we += n_elem_fin
     wn += n_node_fin - 1
     end_of_fin_node = wn - 1
-    print("End fin node: ", end_of_fin_node)
-
-    """# right tail
-    beam_number[we:we + n_elem_tail] = 4
-    x[wn:wn + n_node_tail - 1] = x[end_of_fin_node] #Set the x coordinates to same as last fin node (but we want fuselage)
-    y[wn:wn + n_node_tail - 1] = np.linspace(0.0, span_tail, n_node_tail)[1:]
-    z[wn:wn + n_node_tail - 1] = z[end_of_fin_node]
-    for ielem in range(n_elem_tail):
-        conn[we + ielem, :] = ((np.ones((3,)) * (we + ielem) * (n_node_elem - 1)) +
-                               [0, 2, 1])
-        for inode in range(n_node_elem):
-            frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    print("Current link to fin at node: ", end_of_fin_node, "Expect to link at node: ", end_of_fuselage_node)
-    conn[we, 0] = end_of_fin_node
-
-    print("Connectivities array added to show RIGHT tail)",conn)
-    elem_stiffness[we:we + n_elem_tail] = 2
-    elem_mass[we:we + n_elem_tail] = 2
-    boundary_conditions[wn + n_node_tail - 2] = -1
-    we += n_elem_tail
-    wn += n_node_tail - 1
-    """
+    #print("End fin node: ", end_of_fin_node)
 
     # right tail - respositioned
     beam_number[we:we + n_elem_tail] = 4
@@ -507,10 +470,10 @@ def generate_fem():
                                [0, 2, 1])
         for inode in range(n_node_elem):
             frame_of_reference_delta[we + ielem, inode, :] = [-1.0, 0.0, 0.0]
-    print("Current link to fin at node: ", end_of_fin_node, "Expect to link at node: ", end_of_fuselage_node)
+    #print("Current link to fin at node: ", end_of_fin_node, "Expect to link at node: ", end_of_fuselage_node)
     conn[we, 0] = end_of_fuselage_node
 
-    print("Connectivities array added to show RIGHT tail)",conn)
+    #print("Connectivities array added to show RIGHT tail)",conn)
     elem_stiffness[we:we + n_elem_tail] = 2
     elem_mass[we:we + n_elem_tail] = 2
     boundary_conditions[wn + n_node_tail - 2] = -1
@@ -705,6 +668,7 @@ def generate_aero_file():
     we += n_elem_tail
     wn += n_node_tail
 
+    '''
     """Debugging nodes for aero vs fem"""
     print("aero_node assignments:")
     for i, has_aero in enumerate(aero_node):
@@ -713,7 +677,7 @@ def generate_aero_file():
     print("surface_distribution assignments:")
     for i, surf in enumerate(surface_distribution):
         print(f"  elem {i}: surface={surf}")
-
+    '''
     with h5.File(route + '/' + case_name + '.aero.h5', 'a') as h5file:
         airfoils_group = h5file.create_group('airfoils')
         # add one airfoil
@@ -782,14 +746,6 @@ def generate_solver_file():
                           'write_log': 'on',
                           'log_folder': route + '/output/',
                           'log_file': case_name + '.log'}
-    ### DEBUG ###
-    orient = algebra.euler2quat(np.array([roll, alpha, beta]))
-    print(f"Orientation quaternion: {orient}")
-
-    # Also verify by converting back to euler angles
-    euler_back = algebra.quat2euler(orient)
-    print(f"Back to euler (rad): {euler_back}")
-    print(f"Back to euler (deg): {euler_back * 180/np.pi}")
 
     settings['BeamLoader'] = {'unsteady': 'on',
                               'orientation': algebra.euler2quat(np.array([roll,
@@ -806,12 +762,11 @@ def generate_solver_file():
 
     settings['NonLinearStatic'] = {'print_info': 'off',
                                    'max_iterations': 150, 
-                                   'num_load_steps': 2, 
+                                   'num_load_steps': 1, 
                                    'delta_curved': 1e-1, # What is this setting?
                                    'min_delta': tolerance,
                                    'gravity_on': gravity,
                                    'gravity': 9.81}
-                                   #'relaxation_factor': relaxation_factor}
 
     settings['StaticUvlm'] = {'print_info': 'on',
                               'horseshoe': 'off',
@@ -839,7 +794,8 @@ def generate_solver_file():
                               'solver_settings': settings['StaticCoupled'],
                               'initial_alpha': alpha,
                               'initial_deflection': cs_deflection,
-                              'initial_thrust': thrust}
+                              'initial_thrust': thrust,
+                              'save_info': True}
 
     settings['NonLinearDynamicCoupledStep'] = {'print_info': 'off',
                                                'max_iterations': 950,
@@ -852,7 +808,7 @@ def generate_solver_file():
                                                'dt': dt,
                                                'initial_velocity': u_inf}
 
-    settings['NonLinearDynamicPrescribedStep'] = {'print_info': 'on',
+    settings['NonLinearDynamicPrescribedStep'] = {'print_info': 'off',
                                                   'max_iterations': 950,
                                                   'delta_curved': 1e-1,
                                                   'min_delta': tolerance,
@@ -860,8 +816,27 @@ def generate_solver_file():
                                                   'gravity_on': gravity,
                                                   'gravity': 9.81,
                                                   'num_steps': n_tstep,
-                                                  'dt': dt}
-                                                  #'initial_velocity': u_inf * int(free_flight)}
+                                                  'dt': dt,
+                                                  'initial_velocity': u_inf * int(free_flight)}
+
+    
+    #Solver settings for modal analysis - all settings delcared and set to defaults - [COMPARE AGAINST GENERATE_HALE_INTERIM]
+    settings['Modal'] = {'print_info': True,
+                         'rigid_body_modes': False, #generate_hale.py set to True
+                         'use_undamped_modes': True,
+                         'NumLambda': 20, #generate_hale.py set to 30, this doubles if use_undamped_modes is set to False
+                         'write_modes_vtk': True,
+                         'print_matrices': False,
+                         'save_data': True,
+                         'continuous_eigenvalues': False,
+                         'dt': 0, #generate_hale.py set to dt
+                         'delta_curved': 0.01,
+                         'plot_eigenvalues': False, 
+                         'max_rotation_deg': 15.0, 
+                         'max_displacement': 0.15, 
+                         'use_custom_timestep': -1, 
+                         'rigid_modes_ppal_axes': False, 
+                         'rigid_modes_cg': False}
 
     relative_motion = 'off'
     if not free_flight:
@@ -871,7 +846,7 @@ def generate_solver_file():
                             'convection_scheme': 2,
                             'gamma_dot_filtering': 6,
                             'velocity_field_generator': 'GustVelocityField',
-                            'velocity_field_input': {'u_inf': int(not free_flight) * u_inf,
+                            'velocity_field_input': {'u_inf': u_inf, # previously int(not free_flight) * u_inf,
                                                      'u_inf_direction': [1., 0, 0],
                                                      'gust_shape': '1-cos',
                                                      'gust_parameters': {'gust_length': gust_length,
@@ -900,38 +875,35 @@ def generate_solver_file():
                                   'n_time_steps': n_tstep,
                                   'dt': dt,
                                   'include_unsteady_force_contribution': 'on',
-                                  'postprocessors': ['BeamLoads', 'BeamPlot', 'AerogridPlot'],
-                                  'postprocessors_settings': {'BeamLoads': {'csv_output': 'off'},
-                                                              'BeamPlot': {'include_rbm': 'on',
+                                  'postprocessors': ['BeamLoads', 'BeamPlot', 'AerogridPlot', 'WriteVariablesTime'], #, 'PlotFlowField'],
+                                  'postprocessors_settings': {'BeamLoads': {'csv_output': 'on'},
+                                                              'BeamPlot': {'include_rbm': True,
                                                                            'include_applied_forces': 'on'},
                                                               'AerogridPlot': {
-                                                                  'include_rbm': 'on',
+                                                                  'include_rbm': True,
                                                                   'include_applied_forces': 'on',
                                                                   'minus_m_star': 0},
+                                                              #'PlotFlowField': {'velocity_field_input': u_inf}
+                                                              'WriteVariablesTime' : {
+                                                                'structure_nodes': 16, # Free-end node ID
+                                                                'structure_variables': ['pos'],
+                                                                  #'cleanup_old_solution': 'on',
+                                                                  },
                                                               }}
 
-    settings['BeamLoads'] = {'csv_output': 'on'}
+    settings['BeamLoads'] = {'csv_output': 'off'}
 
-    settings['BeamPlot'] = {'include_rbm': 'on',
+    settings['BeamPlot'] = {'include_rbm': True,
+                            'include_FoR': True,
                             'include_applied_forces': 'on'}
 
 
-    settings['AerogridPlot'] = {'include_rbm': 'on',
+    settings['AerogridPlot'] = {'include_rbm': True,
                                 'include_forward_motion': 'off',
                                 'include_applied_forces': 'on',
                                 'minus_m_star': 0,
                                 'u_inf': u_inf,
                                 'dt': dt}
-
-    settings['Modal'] = {'print_info': True,
-                         'use_undamped_modes': True,
-                         'NumLambda': 30,
-                         'rigid_body_modes': True,
-                         'write_modes_vtk': 'on',
-                         'print_matrices': 'on',
-                         'continuous_eigenvalues': 'off',
-                         'dt': dt,
-                         'plot_eigenvalues': False}
 
     settings['LinearAssembler'] = {'linear_system': 'LinearAeroelastic',
                                    'linear_system_settings': {
@@ -962,7 +934,7 @@ def generate_solver_file():
                                        'export_eigenvalues': 'off',
                                        'num_evals': 40}
     
-    print("DynamicCoupled relaxation_factor:", settings['DynamicCoupled']['relaxation_factor'])
+    #settings['PlotFlowField'] = {'velocity_field_input': u_inf}
 
     import configobj
     config = configobj.ConfigObj()
@@ -976,3 +948,72 @@ generate_fem()
 generate_aero_file()
 generate_solver_file()
 generate_dyn_file()
+
+# Run Sharpy case - added to be able to run Sharpy case automatically and get data object
+# Pull out raw data for displacement here to assess instead of visualising in Paraview
+data = sharpy.sharpy_main.main(['', route + '/' + case_name + '.sharpy'])
+
+"""Data Analysis [CLEAN UP]"""
+#timestep_data = data.structure.timestep_info[-1]
+#print(vars(timestep_data).keys())
+
+#print("The steady applied forces are:", timestep_data.pos)
+
+#print("Structure (timestep_info): ", data.structure.timestep_info)
+#print("Structure (ini_info): ", data.structure.ini_info)
+#print("Settings: ", dir(data.structure))
+#print('All variables in data object:', vars(data))
+
+'''def explore(obj, name='data', depth=0, max_depth=3):
+    indent = '  ' * depth
+    try:
+        attrs = vars(obj).keys()
+    except TypeError:
+        print(f"{indent}{name} = {type(obj)}")
+        return
+    for attr in attrs:
+        child = getattr(obj, attr)
+        print(f"{indent}.{attr}  ({type(child).__name__})")
+        if depth < max_depth and hasattr(child, '__dict__'):
+            explore(child, attr, depth+1, max_depth)
+
+explore(data)'''
+'''
+boundary_conditions = data.structure.boundary_conditions
+print("Boundary conditions:", boundary_conditions)
+
+# Inspect immediately after
+stiffness_db = data.structure.stiffness_db
+elem_stiffness = data.structure.elem_stiffness
+print("Stiffness matrix:", stiffness_db)
+print("Element stiffness assignments:", elem_stiffness)
+
+"""mass_db = data.structure.mass_db
+elem_mass = data.structure.elem_mass
+print("Mass matrix:", mass_db)
+print("Element mass assignments:", mass_db)
+
+for i, K in enumerate(stiffness_db):
+    print(f'Entry {i}: EI1={K[5,5]:.4e}, EI2={K[4,4]:.4e}, ratio={K[4,4]/K[5,5]:.4f}')
+
+#for i, s in enumerate(elem_stiffness):
+#    print(f'  Element {i}: stiffness entry {s}')
+
+# Summary count
+for entry in [0, 1, 2]:
+    count = np.sum(elem_stiffness == entry)
+    print(f'Stiffness entry {entry} used by {count} elements')"""
+
+
+#Static Trim Analysis (Equilibrium State)
+# Displacement of each beam node at the last timestep
+ts = data.structure.timestep_info[-1]
+print(vars(ts).keys())  # see all available fields
+
+print("Node deformed positions:", ts.pos)          # nodal positions (deformed), shape (n_nodes, 3), which is x,y,z for each node?
+#print("Node velocities:", ts.pos_dot)      # nodal velocities
+#print(ts.psi)          # CRV (Cartesian Rotation Vectors) at each element. Wing twist, references/coordinate systems compared. Standard 'output'. Think about how these can be compared with ASWing. 
+
+pos_ini = data.structure.ini_info.pos
+np.savetxt('pos_ini.txt', pos_ini)
+print(pos_ini)'''
