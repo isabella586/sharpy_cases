@@ -21,10 +21,10 @@ flow = ['BeamLoader',
         'AerogridPlot',         # Output of aero grid
         'BeamPlot',             # Beam structure and output data for static
         #'DynamicCoupled'       # Uses BeamLoads, BeamPlot and AerogridPlot at each timestep
-        'Modal',
+        'Modal',                # Remember - this runs 1 step of dynamic coupled solver!
         #'LinearAssember',
         #'AsymptoticStability',
-        #'SaveData'
+        'SaveData'             # This will capture .dat files for Mass, Stiffness and Damping matrices
         ]
 
 # if free_flight is False, the motion of the centre of the wing is prescribed.
@@ -38,7 +38,7 @@ if not free_flight:
 # FLIGHT CONDITIONS
 # the simulation is set such that the aircraft flies at a u_inf velocity while
 # the air is calm.
-u_inf = 6                                               # Freestream velocity (SI units)
+u_inf = 6.5                                               # Freestream velocity (SI units)
 rho = 1.225                                             # Density (SI units) - 400ft flight test is 1.231 kg/m3 density. Sea level 1.225
 
 # trim sigma = 1.5                      
@@ -47,13 +47,24 @@ beta = 0 # Side slip angle                              # Side slip angle (rad)
 roll = 0 # Wings level                                  # Initial/static roll angle (rad) - wings level
 gravity = True
 
-cs_deflection = -2.08 * np.pi / 180                     # [NEEDS WORK] Control surface delfection
+'''### TO DO ###
+#  Control surfaces - each is defined independently but left wing properties are copied from right (flexop), indicies will be offset for left wing based on right wing
+# Airlerons - as from flexop_model
+num_ailerons = 
+ycoord_airlerons = 
+
+# Elevators - as from flexop_model
+numb_elevators = 
+y_coord_elevators = 
+'''
+
+cs_deflection = 0 #-2.08 * np.pi / 180                     # [NEEDS WORK] Control surface delfection (degrees to radians)
 rudder_static_deflection = 0.0                          # Needed?
 rudder_step = 0.0 * np.pi / 180                         # Needed? Step input to rudder (fin-tail coupling?)
 thrust = 6.16
 sigma = 1                                               # Stiffness scaling factor. Previously 1.5
 lambda_dihedral = llta.lambda_dihedral * np.pi / 180    # Dihedral angle (rad)
-alpha_zero_lift = llta.zero_alpha * np.pi / 180        # Zero alpha, nose-down = negative in SHARPy convetion
+alpha_zero_lift = llta.zero_alpha * np.pi / 180         # Zero alpha, nose-down = negative in SHARPy convetion
 
 # gust settings
 gust_intensity = 0.4 
@@ -549,8 +560,8 @@ def generate_aero_file():
     # control surface type 0 = static
     # control surface type 1 = dynamic
     control_surface_type[0] = 0
-    control_surface_deflection[0] = cs_deflection
-    control_surface_chord[0] = m
+    control_surface_deflection[0] = cs_deflection # Converted at input from degrees to radians
+    control_surface_chord[0] = m # m is number of chordwise panels that contribute to the control surface m would be 100% of the chord, counted back from the trailing edge
     control_surface_hinge_coord[0] = -0.25  # nondimensional wrt elastic axis (+ towards the trailing edge)
 
     control_surface_type[1] = 0
@@ -780,7 +791,7 @@ def generate_solver_file():
                                                        'u_inf_direction': [1., 0, 0]},
                               'rho': rho}
 
-    settings['StaticCoupled'] = {'print_info': 'on',
+    settings['StaticCoupled'] = {'print_info': 'off',
                                  'structural_solver': 'NonLinearStatic',
                                  'structural_solver_settings': settings['NonLinearStatic'],
                                  'aero_solver': 'StaticUvlm',
@@ -790,7 +801,8 @@ def generate_solver_file():
                                  'tolerance': fsi_tolerance,
                                  'relaxation_factor': structural_relaxation_factor}
 
-    settings['StaticTrim'] = {'solver': 'StaticCoupled',
+    settings['StaticTrim'] = {'print_info': 'on',
+                              'solver': 'StaticCoupled',
                               'solver_settings': settings['StaticCoupled'],
                               'initial_alpha': alpha,
                               'initial_deflection': cs_deflection,
@@ -822,11 +834,11 @@ def generate_solver_file():
     
     #Solver settings for modal analysis - all settings delcared and set to defaults - [COMPARE AGAINST GENERATE_HALE_INTERIM]
     settings['Modal'] = {'print_info': True,
-                         'rigid_body_modes': False, #generate_hale.py set to True
+                         'rigid_body_modes': True, #generate_hale.py set to True
                          'use_undamped_modes': True,
                          'NumLambda': 20, #generate_hale.py set to 30, this doubles if use_undamped_modes is set to False
                          'write_modes_vtk': True,
-                         'print_matrices': False,
+                         'print_matrices': True,
                          'save_data': True,
                          'continuous_eigenvalues': False,
                          'dt': 0, #generate_hale.py set to dt
@@ -835,8 +847,8 @@ def generate_solver_file():
                          'max_rotation_deg': 15.0, 
                          'max_displacement': 0.15, 
                          'use_custom_timestep': -1, 
-                         'rigid_modes_ppal_axes': False, 
-                         'rigid_modes_cg': False}
+                         'rigid_modes_ppal_axes': True, 
+                         'rigid_modes_cg': True}
 
     relative_motion = 'off'
     if not free_flight:
@@ -933,6 +945,8 @@ def generate_solver_file():
                                        'frequency_cutoff': 0,
                                        'export_eigenvalues': 'off',
                                        'num_evals': 40}
+    
+    settings['SaveData'] = {}
     
     #settings['PlotFlowField'] = {'velocity_field_input': u_inf}
 
