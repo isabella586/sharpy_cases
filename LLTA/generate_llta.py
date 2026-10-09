@@ -7,24 +7,39 @@ import llta_geometry as llta
 import math
 import sharpy.sharpy_main 
 
-case_name = 'llta'
+case_name = 'llta_asymptotic_stability'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 # EXECUTION
-flow = ['BeamLoader',
+"""Original Flow"""
+'''flow = ['BeamLoader',
         'AerogridLoader',
-        #'NonLinearStatic',
-        #'StaticUvlm',
-        'StaticTrim',           # Longitudinal static trim
-        #'StaticCoupled',       # Static coupled solver with GECM and UVLM. This needs calling when running DynamicCoupled (ref dynamiccoupled.py solver script)
-        'BeamLoads',            # Computation of beam loads and strains for static
         'AerogridPlot',         # Output of aero grid
         'BeamPlot',             # Beam structure and output data for static
+        #'NonLinearStatic',
+        #'StaticUvlm',
+        # 'StaticTrim',           # Longitudinal static trim
+        'StaticCoupled',       # Static coupled solver with GECM and UVLM. This needs calling when running DynamicCoupled (ref dynamiccoupled.py solver script)
+        'LiftDistribution',
+        'BeamLoads',            # Computation of beam loads and strains for static
         #'DynamicCoupled'       # Uses BeamLoads, BeamPlot and AerogridPlot at each timestep
         'Modal',                # Remember - this runs 1 step of dynamic coupled solver!
         #'LinearAssember',
         #'AsymptoticStability',
-        'SaveData'             # This will capture .dat files for Mass, Stiffness and Damping matrices
+        'SaveData',             # This will capture .dat files for Mass, Stiffness and Damping matrices
+        'AeroForcesCalculator'
+        ]'''
+
+flow = ['BeamLoader',
+        'AerogridLoader',
+        'StaticTrim',
+        'BeamPlot',
+        'AerogridPlot',
+        'AeroForcesCalculator',
+        'DynamicCoupled',
+        'Modal',
+        'LinearAssembler',
+        'AsymptoticStability',
         ]
 
 # if free_flight is False, the motion of the centre of the wing is prescribed.
@@ -38,8 +53,8 @@ if not free_flight:
 # FLIGHT CONDITIONS
 # the simulation is set such that the aircraft flies at a u_inf velocity while
 # the air is calm.
-u_inf = 6.5                                               # Freestream velocity (SI units)
-rho = 1.225                                             # Density (SI units) - 400ft flight test is 1.231 kg/m3 density. Sea level 1.225
+u_inf = 6.5                                              # Freestream velocity (SI units)
+rho = 0.4137                                             # Density (SI units) - 400ft flight test is 1.231 kg/m3 density. Sea level 1.225. 10km 0.4137
 
 # trim sigma = 1.5                      
 alpha = llta.alpha_deg * np.pi / 180                    # Angle of attack (rad)
@@ -85,6 +100,7 @@ num_cores = 2
 chord_main = llta.chord_main 
 chord_tail = llta.chord_tail
 chord_fin = llta.chord_fin 
+reference_area = llta.chord_main * llta.span_main / 2
 
 # beam
 span_main = llta.span_main / 2  # Semi-span
@@ -97,14 +113,14 @@ gj = llta.gj                            # Torsional stiffness
 eiy = llta.eiy                          # Bending stiffness around the flapwise diration
 eiz = llta.eiz                          # Bending stiffness around the edgewise direction
 m_bar_main = llta.m_bar_main
-j_bar_main = 0.075                      # Not defined by Voltitude - leave for now
+j_bar_main = 1600 * ((np.pi / 32) * ((0.01414**4)-(0.01176**4))) #  SPAR J -> material density * (pi/32)*(OD^4-ID^4) rotational inertia per unit length (all three rotational DOFs), was carried over from generate_hale -> 0.075 (not correct)           
 ccg_main = (llta.cg_offset * chord_main) - (ea_main * chord_main) # Added during investigation of mass matrix and missing coupling terms. This is the CG offset from the elastic axis.
 
 length_fuselage = llta.length_fuselage
 offset_fuselage = 0                     # This is a fuselage that is angled - currently not needed
-sigma_fuselage = 1                      # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
+sigma_fuselage = 1.4                      # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
 m_bar_fuselage = llta.m_bar_fuselage
-j_bar_fuselage = 0.08                   # Not defined by Voltitude - leave for now
+j_bar_fuselage = 1600 * ((np.pi / 32) * ((0.01414**4)-(0.01176**4))) # SPAR J -> material density * (pi/32)*(OD^4-ID^4) rotational inertia per unit length (all three rotational DOFs), was carried over from generate_hale -> 0.08 (not correct) 
 
 span_tail = llta.span_tail
 ea_tail = llta.ea_tail
@@ -112,7 +128,7 @@ fin_height = llta.fin_height
 ea_fin = llta.ea_fin
 sigma_tail = 1                          # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
 m_bar_tail = llta.m_bar_tail
-j_bar_tail = 0.08                       # Not defined by Voltitude - leave for now
+j_bar_tail = 1600 * ((np.pi / 32) * ((0.01414**4)-(0.01176**4))) # SPAR J -> material density * (pi/32)*(OD^4-ID^4) rotational inertia per unit length (all three rotational DOFs), was carried over from generate_hale -> 0.08 (not correct) 
 
 # lumped masses
 n_lumped_mass = 5
@@ -166,10 +182,10 @@ n_elem_fuselage = int(2 * n_elem_multiplier)
 n_surfaces = 5
 
 # temporal discretisation
-physical_time = 1 #30
-tstep_factor = 0.75 #From line below, this is the only variable that makes sense to change, was 1.
+physical_time = 20 #30
+tstep_factor = 1 #0.75 #From line below, this is the only variable that makes sense to change, was 1.
 dt = chord_main / (m * u_inf * tstep_factor)  # Updated so timestep is shedding of one chord length into wake
-n_tstep = round(physical_time / dt)
+n_tstep = 1 #round(physical_time / dt) # set to 1 for Horton example. Need a single time step to give structure the velocity required for linearisation of rigid body equations to be correct
 
 # END OF INPUT-----------------------------------------------------------------
 
@@ -190,7 +206,7 @@ n_elem += n_elem_main2 + n_elem_main2
 n_elem += n_elem_fuselage
 n_elem += n_elem_fin
 n_elem += n_elem_tail + n_elem_tail
-#print("Total elements:", n_elem)
+print("Total elements:", n_elem)
 
 # number of nodes per part
 n_node_main1 = n_elem_main1 * (n_node_elem - 1) + 1
@@ -758,30 +774,31 @@ def generate_solver_file():
                           'log_folder': route + '/output/',
                           'log_file': case_name + '.log'}
 
-    settings['BeamLoader'] = {'unsteady': 'on',
+    settings['BeamLoader'] = {'unsteady': 'off', # was 'on', changed to 'off' in Horton example for asymptotic stability
                               'orientation': algebra.euler2quat(np.array([roll,
                                                                           alpha,
                                                                           beta]))} # Default is: [1.0, 0, 0, 0] 
-    settings['AerogridLoader'] = {'unsteady': 'on',
+    settings['AerogridLoader'] = {'unsteady': 'off', # was 'on', changed to 'off' in Horton example for asymptotic stability
                                   'aligned_grid': 'on',
-                                  'mstar': int(20 / tstep_factor),
+                                  'mstar': int(20 / tstep_factor), # set to int(ws.M * ws.Mstarfactor) in Horton example which is chordwise panels * multiplier (also 20)
                                   'freestream_dir': ['1', '0', '0'],
+                                  # Horton example defines 'control_surface_deflection': [''], here. Why?
                                   'wake_shape_generator': 'StraightWake',
                                   'wake_shape_generator_input': {'u_inf': u_inf,
                                                                  'u_inf_direction': ['1', '0', '0'],
                                                                  'dt': dt}}
 
     settings['NonLinearStatic'] = {'print_info': 'off',
-                                   'max_iterations': 150, 
+                                   'max_iterations': 150, # 200 in Horton example for asymptotic stability
                                    'num_load_steps': 1, 
                                    'delta_curved': 1e-1, # What is this setting?
-                                   'min_delta': tolerance,
+                                   'min_delta': tolerance, 
                                    'gravity_on': gravity,
                                    'gravity': 9.81}
 
     settings['StaticUvlm'] = {'print_info': 'on',
                               'horseshoe': 'off',
-                              'num_cores': num_cores,
+                              'num_cores': num_cores, # 4 in Horton example for asymptotic stability
                               'n_rollup': 0,
                               'rollup_dt': dt,
                               'rollup_aic_refresh': 1,
@@ -791,15 +808,15 @@ def generate_solver_file():
                                                        'u_inf_direction': [1., 0, 0]},
                               'rho': rho}
 
-    settings['StaticCoupled'] = {'print_info': 'off',
+    settings['StaticCoupled'] = {'print_info': 'on',
                                  'structural_solver': 'NonLinearStatic',
                                  'structural_solver_settings': settings['NonLinearStatic'],
                                  'aero_solver': 'StaticUvlm',
                                  'aero_solver_settings': settings['StaticUvlm'],
-                                 'max_iter': 100,
-                                 'n_load_steps': n_step,
+                                 'max_iter': 100, # 200 in Horton example for asymptotic stability
+                                 'n_load_steps': n_step, # 1 in Horton example for asymptotic stability
                                  'tolerance': fsi_tolerance,
-                                 'relaxation_factor': structural_relaxation_factor}
+                                 'relaxation_factor': structural_relaxation_factor} # 0.2 in Horton example for asymptotic stability
 
     settings['StaticTrim'] = {'print_info': 'on',
                               'solver': 'StaticCoupled',
@@ -807,12 +824,13 @@ def generate_solver_file():
                               'initial_alpha': alpha,
                               'initial_deflection': cs_deflection,
                               'initial_thrust': thrust,
-                              'save_info': True}
+                              'save_info': True} # Horton example has additional settings defined:  'max_iter': 200, 'fz_tolerance': 1e-2, 'fx_tolerance': 1e-2,'m_tolerance': 1e-2}
 
     settings['NonLinearDynamicCoupledStep'] = {'print_info': 'off',
+                                               'initial_velocity_direction': [-1., 0., 0.], # Horton example has this defined too
                                                'max_iterations': 950,
-                                               'delta_curved': 1e-1,
-                                               'min_delta': tolerance,
+                                               'delta_curved': 1e-1, # 1e-6 from Horton example
+                                               'min_delta': tolerance, 
                                                'newmark_damp': 5e-3,
                                                'gravity_on': gravity,
                                                'gravity': 9.81,
@@ -836,35 +854,35 @@ def generate_solver_file():
     settings['Modal'] = {'print_info': True,
                          'rigid_body_modes': True, #generate_hale.py set to True
                          'use_undamped_modes': True,
-                         'NumLambda': 20, #generate_hale.py set to 30, this doubles if use_undamped_modes is set to False
+                         'NumLambda': 30, #generate_hale.py set to 30, this doubles if use_undamped_modes is set to False
                          'write_modes_vtk': True,
                          'print_matrices': True,
                          'save_data': True,
                          'continuous_eigenvalues': False,
-                         'dt': 0, #generate_hale.py set to dt
-                         'delta_curved': 0.01,
+                         'dt': 0, #generate_hale.py set to dt # dt set to dt, not zero, in Horton example
+                         #'delta_curved': 0.01, # Not defined in Horton example
                          'plot_eigenvalues': False, 
-                         'max_rotation_deg': 15.0, 
-                         'max_displacement': 0.15, 
-                         'use_custom_timestep': -1, 
-                         'rigid_modes_ppal_axes': True, 
-                         'rigid_modes_cg': True}
+                         #'max_rotation_deg': 15.0, # Not defined in Horton example, what is the default?
+                         #'max_displacement': 0.15, # Not defined in Horton example, what is the default?
+                         #'use_custom_timestep': -1, # Not defined in Horton example, what is the default?
+                         #'rigid_modes_ppal_axes': True, # Not defined in Horton example, what is the default?
+                         'rigid_modes_cg': False} # False in Horton example
 
     relative_motion = 'off'
     if not free_flight:
         relative_motion = 'on'
     settings['StepUvlm'] = {'print_info': 'on',
-                            'num_cores': num_cores,
-                            'convection_scheme': 2,
-                            'gamma_dot_filtering': 6,
-                            'velocity_field_generator': 'GustVelocityField',
-                            'velocity_field_input': {'u_inf': u_inf, # previously int(not free_flight) * u_inf,
-                                                     'u_inf_direction': [1., 0, 0],
-                                                     'gust_shape': '1-cos',
-                                                     'gust_parameters': {'gust_length': gust_length,
-                                                                         'gust_intensity': gust_intensity * u_inf},
-                                                     'offset': gust_offset,
-                                                     'relative_motion': relative_motion},
+                            'num_cores': num_cores, # 4 in Horton example
+                            'convection_scheme': 2, # set by 'wake_type' in Horton example
+                            'gamma_dot_filtering': 6, # 3 in Horton example
+                            'velocity_field_generator': 'SteadyVelocityField', # Was GustVelocityField, changed to Steady velocity field used in Horton example
+                            'velocity_field_input': {'u_inf': u_inf, # previously int(not free_flight) * u_inf, 0 in Horton example
+                                                     'u_inf_direction': [1., 0, 0],},
+                                                     #'gust_shape': '1-cos', # Not used in Horton example
+                                                     #'gust_parameters': {'gust_length': gust_length, # Not used in Horton example
+                                                     #                   'gust_intensity': gust_intensity * u_inf},
+                                                     #'offset': gust_offset,
+                                                     #'relative_motion': relative_motion},
                             'rho': rho,
                             'n_time_steps': n_tstep,
                             'dt': dt}
@@ -884,9 +902,9 @@ def generate_solver_file():
                                   'relaxation_steps': 150,
                                   #'structural_substeps': 4, #New setting declared as part of troubleshooting Singular Matrix (tip from Kelvin)
                                   'final_relaxation_factor': 0.5,
-                                  'n_time_steps': n_tstep,
+                                  'n_time_steps': n_tstep, # 1 for Horton example
                                   'dt': dt,
-                                  'include_unsteady_force_contribution': 'on',
+                                  'include_unsteady_force_contribution': 'off', # Was 'on', changed to 'off' to match Horton example
                                   'postprocessors': ['BeamLoads', 'BeamPlot', 'AerogridPlot', 'WriteVariablesTime'], #, 'PlotFlowField'],
                                   'postprocessors_settings': {'BeamLoads': {'csv_output': 'on'},
                                                               'BeamPlot': {'include_rbm': True,
@@ -910,24 +928,25 @@ def generate_solver_file():
                             'include_applied_forces': 'on'}
 
 
-    settings['AerogridPlot'] = {'include_rbm': True,
-                                'include_forward_motion': 'off',
-                                'include_applied_forces': 'on',
-                                'minus_m_star': 0,
+    settings['AerogridPlot'] = {'include_rbm': 'off', # Was True, changed to 'off' for Horton example 
+                                #'include_forward_motion': 'off', # Not defined for Horton example, what is the default?
+                                #'include_applied_forces': 'on', # Not defined for Horton example, what is the default?
+                                'minus_m_star': 0, 
                                 'u_inf': u_inf,
-                                'dt': dt}
+                                #'dt': dt,    # Not defined for Horton example, what is the default?
+                                } 
 
     settings['LinearAssembler'] = {'linear_system': 'LinearAeroelastic',
                                    'linear_system_settings': {
                                        'beam_settings': {'modal_projection': False,
-                                                         'inout_coords': 'nodes',
+                                                         'inout_coords': 'modes', # was 'nodes', set to 'modes' in Horton example
                                                          'discrete_time': True,
-                                                         'newmark_damp': 0.05,
+                                                         'newmark_damp': 0.005, # was 0.05, set to 0.005 in Horton example
                                                          'discr_method': 'newmark',
                                                          'dt': dt,
                                                          'proj_modes': 'undamped',
-                                                         'use_euler': 'off',
-                                                         'num_modes': 40,
+                                                         #'use_euler': 'off', # Not set in beam setting in Horton example, set outside to 'on'
+                                                         'num_modes': 9, # was 40, set to 9 in Horton example
                                                          'print_info': 'on',
                                                          'gravity': 'on',
                                                          'remove_dofs': []},
@@ -935,18 +954,29 @@ def generate_solver_file():
                                                          'integr_order': 2,
                                                          'density': rho,
                                                          'remove_predictor': False,
-                                                         'use_sparse': True,
-                                                         'remove_inputs': ['u_gust']}
+                                                         'use_sparse': 'off', # Was True, set to 'off' in Horton example
+                                                         'remove_inputs': ['u_gust']},
+                                       'track_body': 'on', # Added setting in Horton example
+                                       'use_euler': 'on', # Added setting in Horton example
                                    }}
 
     settings['AsymptoticStability'] = {'print_info': 'on',
-                                       'modes_to_plot': [],
-                                       'display_root_locus': 'off',
+                                       #'modes_to_plot': [], # Not set in Horton example, what is the default?
+                                       #'display_root_locus': 'off', # Not set in Horton example, what is the default?
                                        'frequency_cutoff': 0,
-                                       'export_eigenvalues': 'off',
-                                       'num_evals': 40}
+                                       #'export_eigenvalues': 'off', # Not set in Horton example, what is the default?
+                                       'num_evals': 100} # was 40, Set to 100 in Horton example
     
     settings['SaveData'] = {}
+
+    settings['LiftDistribution'] = {'rho': rho}
+
+    settings['AeroForcesCalculator'] = {'write_text_file': 'on',
+                                        'text_file_name': case_name + '_aeroforces.csv',
+                                        'screen_output': 'on',
+                                        'coefficients': 'True', #Was off, set to True for Horton example
+                                        'S_ref': reference_area,
+                                        'q_ref': 0.5 * rho * u_inf**2}
     
     #settings['PlotFlowField'] = {'velocity_field_input': u_inf}
 

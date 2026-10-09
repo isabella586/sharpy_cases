@@ -13,8 +13,11 @@ velocities = [5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]
 python_exe = '/opt/miniconda3/envs/sharpy/bin/python'
 script_path = '/Users/icc25/sharpy_cases/llta/generate_llta_trim.py'
 
+CCG_TAG = "control_deflection"
+
 for velocity in velocities:
-    case_name = f'llta_trim_u_inf_{velocity}_camber'
+    suffix = f"_{CCG_TAG}" if CCG_TAG else ""
+    case_name = f'llta_trim_u_inf_{velocity}_{suffix}'
     print(f'Running case: {case_name}')
 
     subprocess.run([python_exe, script_path,'--case_name', case_name,'--velocity', str(velocity)], check=True)
