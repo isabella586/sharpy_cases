@@ -1,2 +1,24 @@
+# Simulation outputs
 *.vtu
 *.vtp
+*.dat
+*.h5
+*.csv
+
+# Logs
+*.log
+*.txt
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# SHARPy output folders
+output/
