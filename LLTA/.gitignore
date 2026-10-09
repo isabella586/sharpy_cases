@@ -4,6 +4,7 @@
 *.dat
 *.h5
 *.csv
+*.eps
 
 # Logs
 *.log
