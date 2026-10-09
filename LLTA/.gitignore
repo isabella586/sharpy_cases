@@ -1,3 +1,6 @@
+# Setup 
+.vscode/
+
 # Simulation outputs
 *.vtu
 *.vtp
@@ -5,6 +8,10 @@
 *.h5
 *.csv
 *.eps
+*.png
+*.xlsx
+archived_data/
+archived_scripts/
 
 # Logs
 *.log
