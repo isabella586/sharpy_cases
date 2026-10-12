@@ -1,5 +1,6 @@
 # Setup 
 .vscode/
+*.md
 
 # Simulation outputs
 *.vtu
@@ -10,6 +11,7 @@
 *.eps
 *.png
 *.xlsx
+*.sharpy
 archived_data/
 archived_scripts/
 
