@@ -61,6 +61,9 @@ REFERENCE_STABILITY_DIR = None  # stability folder of a LOW-DENSITY run of the s
 WAKE_STRUCT_FRACTION = 1e-11 # eigenvectors with less structural content than this are labelled wake (aero) states
 FLIGHT_MIN_STRUCT_FRACTION = 1e-9  # heave/pitch-dominated eigenvalues below this are wake-ladder states
 UNWARP_FREQUENCIES = True    # undo the discrete-time frequency compression: s = (2/dt) tanh(s_obs dt/2)
+SHOW_WAKE_STATES = False     # clean eigenvalue figures only; the diagnostic figure always shows the wake states
+ELASTIC_ZOOM_FMAX = 10.5     # Hz, upper limit of the clean low-frequency elastic figure
+FLIGHT_ZOOM = dict(fmax=2.75, re_min=-17.0)  # clean flight-dynamics figure: damped-frequency and real-part limits
 ARGAND_REFERENCE = 'auto'    # state set to 1 at 0 deg in each diagram: 'auto' = largest state of that mode,
                              # or a state name: 'u','v','w','p','q','r','phi','theta','psi'
 
@@ -108,6 +111,10 @@ HAND_ESTIMATES = [
 # Plot colours (categorical slots 1-7, fixed order)
 COL = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#8a63d2']
 INK, MUTED, GRID = '#1f2937', '#6b7280', '#e5e7eb'
+# Eigenvalue figures: elastic modes coloured by family (same order as the mode-shape slide), flight dynamics separate
+FAMILY_COLOURS = {'wing bending': COL[0], 'wing torsion': COL[1], 'boom / tail': COL[2], 'not in Modal output': MUTED}
+FLIGHT_COLOUR = INK   # black diamonds; marker shape separates them from the elastic modes
+WAKE_COLOUR, LINK_COLOUR = '#d1d5db', '#c3cad5'
 
 
 TRIM_QUAT = np.array([1.0, 0.0, 0.0, 0.0])   # A-frame attitude at trim (overwritten from SaveData 'quat')
@@ -781,6 +788,12 @@ def read_linear_settings(log):
                        density=float(g('aero_settings/density')), ppal=bool(g('beam_settings/rigid_modes_ppal_axes')))
     except Exception as err:
         log.flag(f'Linear settings not read from SaveData ({err}); using defaults {out}')
+    out['u_inf'] = None
+    try:
+        with h5py.File(f, 'r') as h:
+            out['u_inf'] = float(h['data/settings/AerogridLoader/wake_shape_generator_input/u_inf'][()])
+    except Exception:
+        log.info('Free-stream speed not found in SaveData; figure titles will omit it')
     return out
 
 
@@ -937,7 +950,10 @@ def stability_step(mdl, rows_struct, log):
                          f'{d:+.0%} from the structural one - check the mode mapping or a strong aero effect')
 
     write_stability_tables(rows, trk, ref_trk, lin, RESULTS_DIR)
-    plot_root_locus(rows, trk, freq_struct, lin, RESULTS_DIR)
+    tag_eigenvalues(rows, trk, cmodal, rows_struct)
+    has_ref = ref_trk is not None
+    plot_root_locus_diagnostic(rows, trk, freq_struct, lin, has_ref, RESULTS_DIR)
+    plot_eigenvalues_clean(rows, trk, freq_struct, lin, has_ref, RESULTS_DIR)
     plot_damping(trk, ref_trk, RESULTS_DIR)
     argand_flight(rows, n_rig, RESULTS_DIR, log)
     for t in trk:
@@ -968,70 +984,258 @@ def write_stability_tables(rows, trk, ref_trk, lin, outdir):
     md = ['## Structural modes with aerodynamics', '',
           f'Frequencies corrected for discrete-time compression (dt = {lin["dt"]} s). '
           'zeta_num_est = Newmark numerical damping estimate (0.5 x newmark_damp x omega x dt).', '',
-          '| Linear coord | Structural mode | f struct (Hz) | f aero (Hz) | df | zeta | zeta_num_est | zeta_ref | zeta_aero | share | note |',
-          '|---|---|---|---|---|---|---|---|---|---|---|']
-    csv = ['coord,modal_mode,f_struct_Hz,f_aero_Hz,df_pct,zeta,zeta_num_est,zeta_ref,zeta_aero,share,trusted,eig']
+          'f_n = natural frequency |lambda|/2pi (used for df); f_d = damped frequency Im(lambda)/2pi '
+          '(the height plotted in the eigenvalue figures).', '',
+          '| Linear coord | Structural mode | f struct (Hz) | f_n aero (Hz) | f_d aero (Hz) | df (f_n) | zeta | zeta_num_est | zeta_ref | zeta_aero | share | note |',
+          '|---|---|---|---|---|---|---|---|---|---|---|---|']
+    csv = ['coord,modal_mode,f_struct_Hz,f_n_aero_Hz,f_d_aero_Hz,df_pct,zeta,zeta_num_est,zeta_ref,zeta_aero,share,trusted,eig']
     for t in trk:
         r = t['row']
         if r is None:
-            md.append(f'| {t["coord"]} | {t["modal"]} | - | - | - | - | - | - | - | - | not found |'); continue
+            md.append(f'| {t["coord"]} | {t["modal"]} | - | - | - | - | - | - | - | - | - | not found |'); continue
+        fd = r['s_corr'].imag / (2 * np.pi)
         zr = ref_trk.get(t['coord'], {}).get('row') if ref_trk else None
         zref = f'{zr["zeta"]:.4f}' if zr else '-'
         zaer = f'{r["zeta"] - zr["zeta"]:.4f}' if zr else '-'
         df = (r['f'] - t['f_struct']) / t['f_struct'] * 100 if t['modal'] is not None else np.nan
         note = '' if t['trusted'] else 'above trusted range'
         md.append(f'| {t["coord"]} | {r["name"] if t["modal"] is None else r["name"]} | {t["f_struct"]:.2f} | {r["f"]:.2f} | '
-                  f'{df:+.1f}% | {r["zeta"]:.3f} | {t["zeta_num_est"]:.4f} | {zref} | {zaer} | {t["share"]:.2f} | {note} |')
-        csv.append(f'{t["coord"]},{t["modal"]},{t["f_struct"]:.4f},{r["f"]:.4f},{df:.2f},{r["zeta"]:.5f},'
+                  f'{fd:.2f} | {df:+.1f}% | {r["zeta"]:.3f} | {t["zeta_num_est"]:.4f} | {zref} | {zaer} | {t["share"]:.2f} | {note} |')
+        csv.append(f'{t["coord"]},{t["modal"]},{t["f_struct"]:.4f},{r["f"]:.4f},{fd:.4f},{df:.2f},{r["zeta"]:.5f},'
                    f'{t["zeta_num_est"]:.5f},{zref},{zaer},{t["share"]:.3f},{t["trusted"]},{r["eig"]}')
     md += ['', '## Flight-dynamics modes (labels are candidates from the dominant rigid state)', '',
-           '| Eig | Candidate | f (Hz) | zeta | Re (1/s) | Content |', '|---|---|---|---|---|---|']
+           '| Eig | Candidate | f_n (Hz) | f_d (Hz) | zeta | Re (1/s) | Content |', '|---|---|---|---|---|---|---|']
     for r in sorted([r for r in rows if r['cat'] in ('flight', 'zero')], key=lambda r: r['f']):
-        md.append(f'| {r["eig"]} | {r["name"]} | {r["f"]:.3f} | {r["zeta"]:.3f} | {r["s"].real:.3f} | {r["content"]} |')
+        md.append(f'| {r["eig"]} | {r["name"]} | {r["f"]:.3f} | {r["s_corr"].imag / (2 * np.pi):.3f} | {r["zeta"]:.3f} | '
+                  f'{r["s"].real:.3f} | {r["content"]} |')
     open(os.path.join(outdir, 'aeroelastic_mode_table.md'), 'w').write('\n'.join(md) + '\n')
     open(os.path.join(outdir, 'aeroelastic_mode_table.csv'), 'w').write('\n'.join(csv) + '\n')
 
 
-def plot_root_locus(rows, trk, freq_struct, lin, outdir):
-    fig, axs = plt.subplots(1, 2, figsize=(14, 6.2))
-    fmax_trust = 0.25 / lin['dt']
-    for ax, (fmax, remax, title) in zip(axs, [(fmax_trust * 1.6, None, f'0 - {fmax_trust * 1.6:.0f} Hz'),
-                                             (10.5, None, '0 - 10 Hz (flight dynamics and low elastic modes)')]):
-        aero = [r for r in rows if r['cat'] == 'aero' and r['f'] <= fmax]
-        ax.scatter([r['s_corr'].real for r in aero], [r['s_corr'].imag / (2 * np.pi) for r in aero], s=10,
-                   color='#c7c7c7', label='aerodynamic (wake) states', zorder=1)
-        for t in trk:
-            r = t['row']
-            if r is None or t['modal'] is None or r['f'] > fmax:
-                continue
-            ax.plot([0, r['s_corr'].real], [t['f_struct'], r['s_corr'].imag / (2 * np.pi)], color='#9ec5f4', lw=1, zorder=2)
-        el = [r for r in rows if r['cat'] == 'elastic' and r['f'] <= fmax]
-        ax.scatter([r['s_corr'].real for r in el], [r['s_corr'].imag / (2 * np.pi) for r in el], s=34,
-                   color=COL[0], edgecolor='white', linewidth=1, label='elastic (structural) modes', zorder=4)
-        fl = [r for r in rows if r['cat'] == 'flight' and r['f'] <= fmax]
-        ax.scatter([r['s_corr'].real for r in fl], [r['s_corr'].imag / (2 * np.pi) for r in fl], s=48, marker='D',
-                   color=COL[1], edgecolor='white', linewidth=1, label='flight-dynamics modes', zorder=5)
-        fs = [f for f in freq_struct if 0.01 < f <= fmax]
-        ax.scatter(np.zeros(len(fs)), fs, marker='_', s=200, color=INK, linewidth=2,
-                   label='structural modes (no aero)', zorder=3)
-        for r in (fl if fmax < 20 else []):
-            ax.annotate(r['name'].replace('?', ''), (r['s_corr'].real, r['s_corr'].imag / (2 * np.pi)),
-                        textcoords='offset points', xytext=(6, 4), fontsize=7.5, color=INK)
-        ax.axvline(0, color=MUTED, lw=0.8)
-        if fmax > 20:
-            ax.axhline(fmax_trust, color=COL[4], lw=1, ls='--')
-            ax.text(ax.get_xlim()[0] if False else 0, fmax_trust, '  trusted limit', color=COL[4], fontsize=8, va='bottom', ha='right')
-        ax.set_ylim(-0.3, fmax)
-        ax.set_xlabel('Real part (1/s), corrected', color=MUTED)
-        ax.set_ylabel('Frequency (Hz), corrected', color=MUTED)
+def plot_family(r):
+    """Colour family of a classified Modal (structural) row: wing bending / wing torsion / boom / tail."""
+    if r.get('group') == 'wing':
+        return 'wing torsion' if r['family'] == 'torsion' else 'wing bending'
+    return 'boom / tail'
+
+
+def short_mode_label(r):
+    """Compact label for a structural mode, e.g. '13: S wing torsion 1' (Modal mode number first)."""
+    grp = {'fuselage': 'boom', 'tailplane': 'tail'}.get(r['group'], r['group'])
+    fam = FAMILY_NAMES.get(r['group'], {}).get(r['family'], r['family']).replace(' bending', ' bend.')
+    return f'{r["mode"]}: {r["sym"]} {grp} {fam} {r["order"]}'
+
+
+def tag_eigenvalues(rows, trk, coord_modal, rows_struct):
+    """Add plotting fields: corrected Re and damped frequency for every row; family, label and pairing for elastic rows.
+
+    Paired = the eigenvalue is the one tracked from a Modal mode (track_elastic). Elastic-classified eigenvalues
+    that no Modal mode tracks to are 'unpaired' and drawn hollow.
+    """
+    by_mode = {r['mode']: r for r in rows_struct if r['kind'] == 'elastic'}
+    paired = {id(t['row']) for t in trk if t['row'] is not None and t['modal'] is not None}
+    for r in rows:
+        r['re'] = r['s_corr'].real
+        r['fd'] = r['s_corr'].imag / (2 * np.pi)          # damped frequency (Hz) = plotted height
+        if r['cat'] != 'elastic':
+            continue
+        rs = by_mode.get(coord_modal[r['dom']])
+        r['plot_family'] = plot_family(rs) if rs else 'not in Modal output'
+        r['short'] = short_mode_label(rs) if rs else f'E{r["dom"] - 8} (not in Modal)'
+        r['paired'] = id(r) in paired
+
+
+def trusted_fmax(lin):
+    """Upper trusted frequency on the plotted (corrected) axis. The trust test is f_obs < 0.25/dt on the raw axis;
+    with the compression correction that limit maps to tan(pi f_obs dt)/(pi dt)."""
+    f_obs = 0.25 / lin['dt']
+    return np.tan(np.pi * f_obs * lin['dt']) / (np.pi * lin['dt']) if UNWARP_FREQUENCIES else f_obs
+
+
+def conditions_line(lin, has_ref):
+    parts = [CASE_NAME, MODEL_TAG]
+    if lin.get('u_inf'):
+        parts.append(f'U = {lin["u_inf"]:g} m/s')
+    parts.append(f'dt = {lin["dt"]:g} s')
+    parts.append('frequencies corrected for discrete-time compression' if UNWARP_FREQUENCIES else 'raw (uncorrected) frequencies')
+    if not has_ref:
+        parts.append('provisional: no low-density reference run')
+    return '  ·  '.join(parts)
+
+
+def _spread_labels(ax, pts, obstacles=(), min_gap_pt=10.0, pad_pt=8.0, fontsize=7.5):
+    """Direct labels: placed left of each point (right if there is no room), nudged upwards to clear other labels
+    and plotted markers. pts = [(x, y, text)], obstacles = [(x, y)] in data coordinates."""
+    if not pts:
+        return
+    fig = ax.figure
+    fig.canvas.draw()
+    to_pt = 72.0 / fig.dpi
+    left_pt = ax.get_window_extent().x0 * to_pt
+    obs = [tuple(ax.transData.transform(o) * to_pt) for o in obstacles]
+    items = []
+    for x, y, t in pts:
+        xd, yd = ax.transData.transform((x, y)) * to_pt
+        w = len(t) * fontsize * 0.52                     # approximate text width (pt)
+        side = -1 if xd - pad_pt - w > left_pt else 1
+        items.append((yd, xd, x, y, t, w, side))
+    items.sort(key=lambda i: i[0])
+    placed = []
+    for yd, xd, x, y, t, w, side in items:
+        x0, x1 = (xd - pad_pt - w, xd - pad_pt) if side < 0 else (xd + pad_pt, xd + pad_pt + w)
+        yl = yd
+        for _ in range(60):
+            clash = any(abs(yl - py) < min_gap_pt and not (x1 < px0 or x0 > px1) for py, px0, px1 in placed) or \
+                    any(abs(yl - oy) < 7 and x0 - 5 < ox < x1 + 5 for ox, oy in obs)
+            if not clash:
+                break
+            yl += 2.5
+        placed.append((yl, x0, x1))
+        ann = ax.annotate(t, (x, y), xytext=(side * pad_pt, yl - yd), textcoords='offset points',
+                          ha='right' if side < 0 else 'left', va='center', fontsize=fontsize, color=INK, zorder=6,
+                          arrowprops=dict(arrowstyle='-', color=MUTED, lw=0.5, shrinkA=0, shrinkB=3)
+                          if abs(yl - yd) > 2 else None)
+        ann.set_in_layout(False)
+
+
+def _draw_eigs(ax, rows, trk, freq_struct, fmax, re_min=None, show_wake=True, label_elastic=True,
+               label_flight=False, diagnostic=False):
+    """Draw one eigenvalue panel. Height = damped frequency Im(lambda)/2pi; points filtered on that same value."""
+    def inside(r):
+        return -0.05 <= r['fd'] <= fmax and (re_min is None or r['re'] >= re_min)
+
+    if show_wake:
+        aero = [r for r in rows if r['cat'] == 'aero' and inside(r)]
+        ax.scatter([r['re'] for r in aero], [r['fd'] for r in aero], s=9, color=WAKE_COLOUR, linewidth=0,
+                   label='aerodynamic (wake) states', zorder=1)
+    fs = [f for f in freq_struct if 0.01 < f <= fmax]
+    ax.scatter(np.zeros(len(fs)), fs, marker='_', s=170, color=INK, linewidth=1.6,
+               label='structural modes, no aero (Modal)', zorder=3)
+    for t in trk:
+        r = t['row']
+        if r is None or t['modal'] is None or not inside(r):
+            continue
+        ax.plot([0, r['re']], [t['f_struct'], r['fd']], color=LINK_COLOUR, lw=0.9, zorder=2)
+
+    el = [r for r in rows if r['cat'] == 'elastic' and inside(r)]
+    for fam, col in FAMILY_COLOURS.items():
+        p = [r for r in el if r['plot_family'] == fam and r['paired']]
+        if p:
+            ax.scatter([r['re'] for r in p], [r['fd'] for r in p], s=46, color=col, edgecolor='white', linewidth=1.2,
+                       label=f'elastic: {fam}', zorder=4)
+    unp = [r for r in el if not r['paired']]
+    if unp:
+        ax.scatter([r['re'] for r in unp], [r['fd'] for r in unp], s=46, facecolor='white',
+                   edgecolor=[FAMILY_COLOURS[r['plot_family']] for r in unp], linewidth=1.5,
+                   label='elastic, not tracked to a Modal mode', zorder=4)
+    fl = [r for r in rows if r['cat'] == 'flight' and inside(r)]
+    if fl:
+        ax.scatter([r['re'] for r in fl], [r['fd'] for r in fl], s=58, marker='D', color=FLIGHT_COLOUR,
+                   edgecolor='white', linewidth=1.2, label='flight dynamics (candidates)', zorder=5)
+
+    ax.axvline(0, color=MUTED, lw=0.8, zorder=0)
+    ax.set_ylim(-0.03 * fmax, fmax)
+    if re_min is not None:
+        ax.set_xlim(re_min, max(0.5, -0.04 * re_min))
+    elif label_elastic and not diagnostic:
+        lo = min([r['re'] for r in el + fl] + [-1.0])
+        ax.set_xlim(1.5 * lo, max(0.5, -0.04 * lo))     # room for labels left of the leftmost points
+    ax.set_xlabel(r'Real part, Re($\lambda$) (1/s)', color=MUTED)
+    ax.set_ylabel(r'Damped frequency, Im($\lambda$)/2$\pi$ (Hz)', color=MUTED)
+    ax.grid(color=GRID, lw=0.6)
+    ax.spines[['top', 'right']].set_visible(False)
+    ax.tick_params(colors=MUTED)
+
+    labels = []
+    if label_elastic:
+        for r in el:
+            if r['paired']:
+                labels.append((r['re'], r['fd'], r['short']))
+            elif diagnostic:
+                labels.append((r['re'], r['fd'], f'eig {r["eig"]} (untracked, {r["plot_family"]})'))
+    if label_flight:
+        for r in fl:
+            name = r['name'] if diagnostic else \
+                r['name'].replace('?', '').replace(' (wake-coupled pair)', ', wake-coupled').strip() + ' (cand.)'
+            labels.append((r['re'], r['fd'], name))
+    obstacles = [(r['re'], r['fd']) for r in el + fl]
+    return labels, obstacles
+
+
+def plot_root_locus_diagnostic(rows, trk, freq_struct, lin, has_ref, outdir):
+    """Everything on: wake states, tracking lines, untracked elastic eigenvalues (with eig index), raw candidate names,
+    trusted limit. Two panels: full range and 0-10 Hz."""
+    f_tr = trusted_fmax(lin)
+    fig, axs = plt.subplots(1, 2, figsize=(15, 6.6))
+    for ax, fmax, title in [(axs[0], f_tr * 1.25, f'0 - {f_tr * 1.25:.0f} Hz'),
+                            (axs[1], ELASTIC_ZOOM_FMAX, f'0 - {ELASTIC_ZOOM_FMAX:g} Hz')]:
+        labels, obs = _draw_eigs(ax, rows, trk, freq_struct, fmax, show_wake=True, label_elastic=fmax < 20,
+                                 label_flight=fmax < 20, diagnostic=True)
+        if fmax > f_tr:
+            ax.axhline(f_tr, color=COL[4], lw=1, ls='--', zorder=0)
+            ax.text(ax.get_xlim()[0], f_tr, f' trusted limit ({f_tr:.1f} Hz corrected = {0.25 / lin["dt"]:.0f} Hz raw)',
+                    color=COL[4], fontsize=8, va='bottom', ha='left')
         ax.set_title(title, loc='left', fontsize=10.5, color=INK)
-        ax.grid(color=GRID, lw=0.6); ax.spines[['top', 'right']].set_visible(False); ax.tick_params(colors=MUTED)
-    axs[0].legend(fontsize=8, frameon=False, loc='upper left')
-    fig.suptitle(f'{CASE_NAME}: aeroelastic eigenvalues (light lines join each structural mode to its aeroelastic mode)',
-                 fontsize=11.5, color=INK, x=0.01, ha='left')
+        _spread_labels(ax, labels, obs)
+    axs[0].legend(fontsize=8, frameon=False, loc='lower left')
+    fig.suptitle('Aeroelastic eigenvalues, diagnostic view (light lines join each Modal mode to the eigenvalue tracked from it)\n'
+                 + conditions_line(lin, has_ref), fontsize=10.5, color=INK, x=0.01, ha='left')
     fig.tight_layout()
-    fig.savefig(os.path.join(outdir, 'aeroelastic_root_locus.png'), dpi=150)
+    fig.savefig(os.path.join(outdir, 'aeroelastic_root_locus_diagnostic.png'), dpi=150)
     plt.close(fig)
+
+
+def plot_eigenvalues_clean(rows, trk, freq_struct, lin, has_ref, outdir):
+    """Three separate presentation figures: trusted range, low-frequency elastic zoom, flight-dynamics zoom.
+    Legend sits outside the axes on the right; conditions line under the title."""
+    f_tr = trusted_fmax(lin)
+    parts = conditions_line(lin, has_ref).split('  ·  ')
+    sub = '  ·  '.join(parts[:4]) + '\n' + '  ·  '.join(parts[4:])
+
+    def finish(fig, ax, title, fname):
+        ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1.0))
+        ax.set_title(title, loc='left', fontsize=11.5, color=INK, pad=40)
+        ax.text(0, 1.012, sub, transform=ax.transAxes, fontsize=7.5, color=MUTED, ha='left', va='bottom',
+                linespacing=1.4)
+        fig.tight_layout()
+        fig.savefig(os.path.join(outdir, fname), dpi=200)
+        plt.close(fig)
+
+    # 1. Trusted range
+    fig, ax = plt.subplots(figsize=(11, 7.4))
+    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, f_tr, show_wake=SHOW_WAKE_STATES)
+    _spread_labels(ax, labels, obs)
+    finish(fig, ax, f'Aeroelastic eigenvalues, 0 - {f_tr:.0f} Hz (trusted range)', 'aeroelastic_eigenvalues_full.png')
+
+    # 2. Low-frequency elastic zoom
+    fig, ax = plt.subplots(figsize=(11, 6.4))
+    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, ELASTIC_ZOOM_FMAX, show_wake=SHOW_WAKE_STATES)
+    _spread_labels(ax, labels, obs)
+    finish(fig, ax, f'Low-frequency elastic modes, 0 - {ELASTIC_ZOOM_FMAX:g} Hz',
+           'aeroelastic_eigenvalues_elastic_zoom.png')
+
+    # 3. Flight dynamics, with an inset for the slow modes near the origin
+    fig, ax = plt.subplots(figsize=(11, 6.4))
+    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, FLIGHT_ZOOM['fmax'], re_min=FLIGHT_ZOOM['re_min'],
+                             show_wake=SHOW_WAKE_STATES, label_flight=True)
+    slow = [l for l in labels if l[0] > -1.0 and l[1] < 0.6]
+    ins = ax.inset_axes([0.62, 0.36, 0.34, 0.40])
+    sl = [r for r in rows if r['cat'] == 'flight' and r['re'] > -1.0 and -0.05 <= r['fd'] < 0.6]
+    ins.scatter([r['re'] for r in sl], [r['fd'] for r in sl], s=50, marker='D', color=FLIGHT_COLOUR,
+                edgecolor='white', linewidth=1.2, zorder=5)
+    ins.axvline(0, color=MUTED, lw=0.8)
+    ins.set_xlim(-0.65, 0.12)
+    ins.set_ylim(-0.04, 0.55)
+    ins.grid(color=GRID, lw=0.6)
+    ins.tick_params(colors=MUTED, labelsize=7)
+    ins.set_title('slow modes near the origin', fontsize=7.5, color=MUTED, loc='left')
+    for x, y, t in slow:
+        left_half = x < 0.5 * ins.get_xlim()[0]          # label to the right if the point is in the left half
+        ins.annotate(t, (x, y), xytext=(6 if left_half else -6, 5), textcoords='offset points',
+                     ha='left' if left_half else 'right', fontsize=7.5, color=INK)
+    ax.indicate_inset_zoom(ins, edgecolor=MUTED, alpha=0.6)
+    _spread_labels(ax, [l for l in labels if l not in slow], obs)
+    finish(fig, ax, f'Flight-dynamics modes, 0 - {FLIGHT_ZOOM["fmax"]:g} Hz', 'aeroelastic_eigenvalues_flight.png')
 
 
 def plot_damping(trk, ref_trk, outdir):
