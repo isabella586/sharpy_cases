@@ -52,7 +52,7 @@ eiy = 51.25 # Bending stiffness - Voltitude defined (35.54 old)
 eiz = 2e4 #2e4 # Sharpy default (HALE)
 
 gj_fuselage = 7.16 # Voltitude defined
-eiy_fuselage = eiz # axis changes for the fuselage
+eiy_fuselage = 71.71 # axis changes for the fuselage
 eiz_fuselage = 71.71 # Voltitude defined
 print("Fuselage stiffness properties:", gj_fuselage, eiy_fuselage, eiz_fuselage)
 
