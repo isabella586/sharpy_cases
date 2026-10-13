@@ -17,6 +17,7 @@ ea_main = 0.35 # From ASWing file (fraction) - ASWing definition is distance/cho
 print("Position of elastic axis on main wing is:", (ea_main*chord_main), "m from leading edge. NOTE: ea_main is set as a fraction") 
 cg_offset_main = 0.02 # From ASWing file - main wing CG offset (m) aft of elastic axis
 print("Position of the main wing CG is:", (ea_main*chord_main + cg_offset_main), "m from leading edge.")
+wing_incidence = -5 * (np.pi/180)
 
 # tail/elevator
 chord_tail = 0.135 # From ASWing file (m)

@@ -127,6 +127,7 @@ num_cores = 2
 chord_main = llta.chord_main 
 chord_tail = llta.chord_tail
 chord_fin = llta.chord_fin 
+wing_incidence = llta.wing_incidence
 reference_area = llta.chord_main * llta.span_main # full aircraft
 
 dclda_wing = 4.97
@@ -697,6 +698,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = temp_chord[node_counter]
             elastic_axis[i_elem, i_local_node] = ea_main
             sweep[i_elem, i_local_node] = temp_sweep[node_counter]
+            twist[i_elem, i_local_node] = wing_incidence
 
     #polars[0] = build_polar_from_aswing(dclda_wing, cl_max_wing, cl_min_wing, aoa_l0_deg_wing,
                                         #cm0=0.0, cd0=0.015,
@@ -724,6 +726,7 @@ def generate_aero_file():
             chord[i_elem, i_local_node] = temp_chord[node_counter]
             elastic_axis[i_elem, i_local_node] = ea_main
             sweep[i_elem, i_local_node] = -temp_sweep[node_counter]
+            twist[i_elem, i_local_node] = wing_incidence
 
     #polars[0] = build_polar_from_aswing(dclda_wing, cl_max_wing, cl_min_wing, aoa_l0_deg_wing,
                                         #cm0=0.0, cd0=0.015,

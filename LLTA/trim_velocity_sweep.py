@@ -13,7 +13,7 @@ velocities = [5, 5.5, 6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10]
 python_exe = '/opt/miniconda3/envs/sharpy/bin/python'
 script_path = '/Users/icc25/sharpy_cases/llta/generate_llta_trim.py'
 
-CCG_TAG = "control_deflection"
+CCG_TAG = "wingincidence"
 
 for velocity in velocities:
     suffix = f"_{CCG_TAG}" if CCG_TAG else ""
