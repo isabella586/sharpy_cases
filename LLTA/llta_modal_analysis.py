@@ -52,8 +52,12 @@ MODAL_DIR = None        # None = auto-find the folder containing Mglobal.dat und
 SAVEDATA_FILE = None    # None = auto-find a .h5 file under OUTPUT_ROUTE/savedata
 RESULTS_DIR = os.path.join(OUTPUT_ROUTE, 'modal_analysis_results')
 MAKE_MODE_PLOTS = True
-MAKE_RIGID_ARGAND = True     # Argand (complex-plane) diagrams of the rigid-body modes' state content
-ARGAND_DECADES = 3           # Argand arrow length is log10 scaled over this many decades
+MODE_PLOT_DIAGNOSTIC = True  # keep the full 3-panel A-frame mode plots (mode_shapes/) while the clean plots are refined
+CLEAN_MODE_PLOTS = 'all'     # 'all' or a list of mode numbers for the clean publication-style plots (mode_shapes_clean/)
+PAPER_FIG_WIDTH_IN = 7.0     # clean mode plots: figure width (in); 7.0 = full text width, 3.5 = single journal column
+PAPER_FIG_ASPECT = 0.32      # clean mode plots: height / width - wide and short to suit a high-aspect-ratio wing
+PAPER_FONT_PT = 9            # clean mode plots: label font size (pt); ticks/tags 1 pt smaller
+ARGAND_DECADES = 3           # flight-dynamics Argand (Step 6): arrow length log10 scaled over this many decades
 ANALYSE_STABILITY = True     # read AsymptoticStability output (Step 6) if a stability folder exists
 STABILITY_DIR = None         # None = OUTPUT_ROUTE/stability
 REFERENCE_STABILITY_DIR = None  # stability folder of a LOW-DENSITY run of the same case (numerical damping),
@@ -64,8 +68,6 @@ UNWARP_FREQUENCIES = True    # undo the discrete-time frequency compression: s =
 SHOW_WAKE_STATES = False     # clean eigenvalue figures only; the diagnostic figure always shows the wake states
 ELASTIC_ZOOM_FMAX = 10.5     # Hz, upper limit of the clean low-frequency elastic figure
 FLIGHT_ZOOM = dict(fmax=2.75, re_min=-17.0)  # clean flight-dynamics figure: damped-frequency and real-part limits
-ARGAND_REFERENCE = 'auto'    # state set to 1 at 0 deg in each diagram: 'auto' = largest state of that mode,
-                             # or a state name: 'u','v','w','p','q','r','phi','theta','psi'
 
 # Beam numbers as written by generate_llta_trim.py
 BEAM_NAMES = {0: 'R wing', 1: 'L wing', 2: 'fuselage', 3: 'fin', 4: 'R tail', 5: 'L tail'}
@@ -367,6 +369,17 @@ def resolve_symmetric(mdl, log):
 # =====================================================================================
 # Step 3 - rigid-body modes
 # =====================================================================================
+# Method used here: rigid fraction c = a^T M_rr a / phi^T M phi, with a = M_rr^-1 (M phi)[last 10 rows]
+# (Mglobal.dat + eigenvectors.dat). c = 1 for a rigid-body mode, c = 0 for an elastic mode.
+#
+# ALTERNATIVE (simpler): use omega from the Modal eigenvalues (frequencies.dat, or Im(lambda) in
+# eigenvaluetable.txt). Modal is undamped, so Re(lambda) = 0 for EVERY mode and cannot be used;
+# Im(lambda) = omega = 0 for rigid-body modes and omega > 0 for elastic modes.
+# For the LLTA the gap is clear (0 vs 15.26 rad/s for the first elastic mode), e.g.
+#     is_rigid = mdl.w < 1e-3 * mdl.w.max()
+# Caveats: numerical rigid frequencies are only approximately zero, so a threshold is still needed;
+# and an omega test does not check that elastic modes carry no rigid-body momentum (a mass-matrix
+# check that c provides). Kept: rigid fraction c below; omega test noted as an alternative for now.
 RIGID_NAMES = ['surge (x)', 'sway (y)', 'heave (z)', 'roll', 'pitch', 'yaw',
                'quaternion q0', 'quaternion q1', 'quaternion q2', 'quaternion q3']
 
@@ -403,141 +416,6 @@ def rigid_analysis(mdl, log):
 
 
 # =====================================================================================
-# Step 3b - Argand diagrams of rigid-body mode content (CG / principal axes)
-# =====================================================================================
-ARGAND_STATES = ['u', 'v', 'w', 'p', 'q', 'r', 'phi', 'theta', 'psi']
-ARGAND_UNITS = {'u': 'm/s', 'v': 'm/s', 'w': 'm/s', 'p': 'rad/s', 'q': 'rad/s', 'r': 'rad/s',
-                'phi': 'rad', 'theta': 'rad', 'psi': 'rad'}
-
-
-def rigid_states_cg(mdl, phi, mp):
-    """Rigid-body states of one eigenvector, referred to the CG and the principal axes of inertia.
-
-    phi : eigenvector (real or complex). Rigid DOFs (A-frame, node 0): v_A = phi[nf:nf+3],
-          omega_A = phi[nf+3:nf+6], quaternion perturbation dq = phi[nf+6:nf+10].
-    Translation at the CG:  v_cg = v_A + omega_A x r_cg      (r_cg from node 0, A-frame)
-    Attitude from the quaternion (linearised about the trim quaternion q = [q0, qv]):
-          d_theta_A = 2 (q0 dqv - dq0 qv - qv x dqv)
-    All vectors are then rotated into principal axes: x_P = R_pa^T x_A.
-    """
-    nf = mdl.nf
-    vA, wA, dq = phi[nf:nf + 3], phi[nf + 3:nf + 6], phi[nf + 6:nf + 10]
-    q0, qv = TRIM_QUAT[0], TRIM_QUAT[1:]
-    att = 2.0 * (q0 * dq[1:] - dq[0] * qv - np.cross(qv, dq[1:]))
-    vcg = vA + np.cross(wA, mp['cg'])
-    Rt = mp['R_pa'].T
-    return np.concatenate([Rt @ vcg, Rt @ wA, Rt @ att])
-
-
-def principal_axes(mp):
-    """Principal axes of the CG inertia tensor, ordered and signed to stay closest to A-frame x, y, z."""
-    lam, R = np.linalg.eigh(mp['I_cg'])
-    order = [int(np.argmax(np.abs(R[k, :]))) for k in range(3)]
-    if len(set(order)) < 3:
-        order = [0, 1, 2]
-    R = R[:, order]
-    R = R * np.sign(np.diag(R))
-    if np.linalg.det(R) < 0:
-        R[:, 2] *= -1
-    return R
-
-
-def argand_rigid(mdl, rig, is_rigid, mp, outdir, log):
-    mp = dict(mp)
-    mp['R_pa'] = principal_axes(mp)
-    tilt = np.degrees(np.arctan2(mp['R_pa'][2, 0], mp['R_pa'][0, 0]))
-    log.info(f'Argand: states referred to CG {np.round(mp["cg"] * 1e3, 1)} mm from node 0, principal axes '
-             f'(x_P tilted {tilt:+.2f} deg from x_A about y); trim quaternion {np.round(TRIM_QUAT, 5)}')
-    idx = [i for i in range(mdl.V.shape[1]) if is_rigid[i]]
-    rows, panels = [], []
-    for i in idx:
-        z = rigid_states_cg(mdl, mdl.V[:, i].astype(complex), mp)
-        if np.abs(z).max() < 1e-12:
-            panels.append((i, None, None, None)); rows.append((i, 'none', z)); continue
-        k = int(np.argmax(np.abs(z))) if ARGAND_REFERENCE == 'auto' else ARGAND_STATES.index(ARGAND_REFERENCE)
-        if abs(z[k]) < 1e-12:                         # requested reference absent in this mode
-            k = int(np.argmax(np.abs(z)))
-        zn = z / z[k]                                 # reference state -> 1 at 0 deg
-        # quaternion modes: how much of |dq| is a real rotation (the rest only changes the quaternion norm)
-        dq = mdl.V[mdl.nf + 6:mdl.nf + 10, i]
-        qshare = (np.linalg.norm(z[6:9]) / 2) / np.linalg.norm(dq) if np.linalg.norm(dq) > 0.5 * np.linalg.norm(mdl.V[mdl.nf:, i]) else None
-        panels.append((i, zn, k, qshare)); rows.append((i, ARGAND_STATES[k], zn))
-
-    # CSV of normalised content (magnitude and phase)
-    with open(os.path.join(outdir, 'rigid_mode_argand.csv'), 'w') as f:
-        f.write('mode,reference_state,' + ','.join(f'{s}_mag,{s}_phase_deg' for s in ARGAND_STATES) + '\n')
-        for i, ref, zn in rows:
-            f.write(f'{i},{ref},' + ','.join(f'{abs(c):.6e},{np.degrees(np.angle(c)):.1f}' for c in zn) + '\n')
-
-    # Figure: one Argand panel per rigid mode
-    ncol = 5
-    nrow = int(np.ceil(len(panels) / ncol))
-    fig, axs = plt.subplots(nrow, ncol, figsize=(3.4 * ncol, 3.8 * nrow + 1.2))
-    axs = np.atleast_2d(axs)
-    colours = dict(zip(ARGAND_STATES, COL + ['#8c564b', '#4b5563']))
-    for ax, (i, zn, k, qshare) in zip(axs.flat, panels):
-        ax.set_aspect('equal')
-        ax.axhline(0, color=GRID, lw=0.8); ax.axvline(0, color=GRID, lw=0.8)
-        t = np.linspace(0, 2 * np.pi, 200)
-        for dec in range(ARGAND_DECADES):              # log-radius rings: 1, 0.1, 0.01, ...
-            rr = 1 - dec / ARGAND_DECADES
-            ax.plot(rr * np.cos(t), rr * np.sin(t), color=GRID, lw=0.8)
-            ax.text(rr * np.cos(np.radians(60)), rr * np.sin(np.radians(60)), f'{10.0 ** -dec:g}', fontsize=6.5, color=MUTED)
-        ax.set_xlim(-1.45, 1.45); ax.set_ylim(-1.45, 1.45)
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.text(1.42, 0.03, 'Re', fontsize=7, color=MUTED, ha='right', va='bottom')
-        ax.text(0.03, 1.42, 'Im', fontsize=7, color=MUTED, ha='left', va='top')
-        for sp in ax.spines.values():
-            sp.set_color(GRID)
-        title = f'Mode {i} - {rig[i]["rigid_name"]}'
-        if zn is None:
-            ax.text(0, 0, 'no physical rigid motion\n(quaternion normalisation\ncomponent)', ha='center',
-                    va='center', fontsize=8, color=MUTED)
-            ax.set_title(title, fontsize=9, color=INK, loc='left')
-            continue
-        shown = sorted([j for j in range(9) if abs(zn[j]) > 10.0 ** -ARGAND_DECADES], key=lambda j: -abs(zn[j]))
-        labels_y = {}
-        for j in shown:
-            c0 = zn[j]
-            rad = 1 + np.log10(abs(c0)) / ARGAND_DECADES  # log radius: 1 -> 1, 10^-decades -> 0
-            c = rad * np.exp(1j * np.angle(c0))
-            ax.annotate('', xy=(c.real, c.imag), xytext=(0, 0),
-                        arrowprops=dict(arrowstyle='-|>', color=colours[ARGAND_STATES[j]], lw=2, mutation_scale=10))
-            # stagger labels of arrows that share a direction (real modes lie on the real axis)
-            key = (round(np.angle(c), 2))
-            n = labels_y.get(key, 0); labels_y[key] = n + 1
-            ang = np.angle(c)
-            ax.text(c.real + 0.06 * np.cos(ang), c.imag + 0.06 * np.sin(ang) + 0.17 * n,
-                    f'{ARGAND_STATES[j]} {abs(c0):.3g}', fontsize=7.5, color=INK,
-                    ha='left' if c.real >= 0 else 'right', va='bottom')
-        sub = f'ref: {ARGAND_STATES[k]} = 1 at 0 deg'
-        if qshare is not None:
-            sub += f'; rotation = {qshare:.1%} of |dq|'
-        ax.set_title(title + '\n' + sub, fontsize=9, color=INK, loc='left')
-    for ax in list(axs.flat)[len(panels):]:
-        ax.axis('off')
-    fig.suptitle(f'{CASE_NAME} ({MODEL_TAG}): rigid-body mode content, CG / principal axes '
-                 f'(units: u,v,w m/s; p,q,r rad/s; phi,theta,psi rad)\nArrow length on a log scale: rings at 1, 0.1, 0.01 relative to the reference state; components below '
-                 f'{10.0 ** -ARGAND_DECADES:g} hidden',
-                 fontsize=10.5, color=INK, x=0.01, ha='left')
-    fig.text(0.01, 0.005, 'Undamped Modal eigenvectors are real, so every arrow lies at 0 or 180 deg; phase content appears only for '
-             'complex modes (e.g. AsymptoticStability), which this function accepts unchanged.\nSHARPy rotations are about node 0, '
-             'so referring them to the CG adds translation (e.g. pitch -> u). Quaternion modes: "rotation %" is the share of the '
-             'perturbation that is a real attitude change; the rest only changes the quaternion norm.',
-             fontsize=7.5, color=MUTED)
-    fig.tight_layout(rect=(0, 0.05, 1, 0.92), h_pad=2.0)
-    fig.savefig(os.path.join(outdir, 'rigid_mode_argand.png'), dpi=150)
-    plt.close(fig)
-    for i, ref, zn in rows:
-        if ref == 'none':
-            log.info(f'Argand mode {i}: no physical rigid motion (quaternion normalisation component)')
-        else:
-            others = ', '.join(f'{ARGAND_STATES[j]} {zn[j].real:+.3g}' for j in range(9)
-                               if abs(zn[j]) > 1e-3 and ARGAND_STATES[j] != ref)
-            log.info(f'Argand mode {i}: {ref} = 1' + (f'; also {others}' if others else '; pure'))
-
-
-# =====================================================================================
 # Step 4 - elastic mode classification
 # =====================================================================================
 def strain_energy(mdl, phi):
@@ -558,6 +436,13 @@ def strain_energy(mdl, phi):
 
 
 def kinetic_by_component(mdl, phi):
+    """Share of the mode's kinetic energy in each component (lumped: m|u|^2 + theta^T J theta per node).
+
+    INFORMATION ONLY: this does not feed the mode label or the rigid/elastic classification. It is reported
+    in mode_table (Top kinetic energy, KE_* columns) to show WHERE THE MASS MOVES, as a complement to the
+    strain energy (where the structure deforms). Uses: GVT sensor placement, mass-change sensitivity,
+    interpreting hand-estimate mismatches (e.g. hub participation).
+    """
     T = {}
     for nd in range(len(mdl.case['boundary_conditions'])):
         comp = mdl.node_comp.get(nd, 'hub')
@@ -590,11 +475,19 @@ def wing_line(mdl, comp='R wing'):
 
 
 def nodal_points(mdl, phi, family):
+    """Sign changes of the dominant quantity along the right semi-span (hub to tip), wing modes only.
+
+    INFORMATION ONLY: this does not feed the mode label or the classification. It is reported in mode_table
+    (wing_nodal_points) as a cross-check on the '#n' order in the label.
+    Quantity: twist about the beam axis (torsion), vertical displacement z (flapwise bending, bend_y),
+    fore-aft displacement x (in-plane bending, bend_z).
+    """
     nodes = wing_line(mdl)
     if family == 'torsion':
         vals = np.array([mdl.theta_B(phi, *mdl.master[nd])[0] for nd in nodes])
     else:
-        vals = np.array([mdl.u_abs(phi, nd)[2] for nd in nodes])
+        comp = 0 if family == 'bend_z' else 2      # in-plane bending -> x (fore-aft); flapwise -> z (vertical)
+        vals = np.array([mdl.u_abs(phi, nd)[comp] for nd in nodes])
     big = vals[np.abs(vals) > 0.05 * np.abs(vals).max()]
     return int(np.sum(np.sign(big[1:]) != np.sign(big[:-1])))
 
@@ -699,6 +592,286 @@ def write_tables(rows, outdir):
     open(os.path.join(outdir, 'mode_table.md'), 'w').write('\n'.join(md) + '\n')
 
 
+def paper_rc():
+    """Matplotlib style for publication figures (LaTeX look): serif Computer Modern, 8-9 pt, black lines,
+    inward ticks on all four sides, no grid, no title (the caption goes in the paper).
+    Uses real LaTeX if it is installed (exact match to the paper's font); otherwise mathtext Computer Modern."""
+    import shutil
+    rc = {'font.family': 'serif', 'font.size': PAPER_FONT_PT, 'axes.labelsize': PAPER_FONT_PT,
+          'xtick.labelsize': PAPER_FONT_PT - 1, 'ytick.labelsize': PAPER_FONT_PT - 1,
+          'legend.fontsize': PAPER_FONT_PT - 1, 'axes.linewidth': 0.6, 'axes.edgecolor': 'k',
+          'axes.labelcolor': 'k', 'text.color': 'k', 'xtick.color': 'k', 'ytick.color': 'k',
+          'xtick.direction': 'in', 'ytick.direction': 'in', 'xtick.top': True, 'ytick.right': True,
+          'xtick.major.size': 3.0, 'ytick.major.size': 3.0, 'xtick.major.width': 0.6, 'ytick.major.width': 0.6,
+          'xtick.minor.visible': True, 'ytick.minor.visible': True, 'xtick.minor.size': 1.5, 'ytick.minor.size': 1.5,
+          'axes.grid': False, 'savefig.bbox': 'tight', 'savefig.pad_inches': 0.02,
+          'pdf.fonttype': 42, 'ps.fonttype': 42}         # embed TrueType, not Type 3 (journal requirement)
+    if shutil.which('latex') and shutil.which('dvipng'):
+        rc.update({'text.usetex': True, 'font.serif': ['Computer Modern Roman']})
+    else:
+        # cmr10 ships with matplotlib, so the Computer Modern look works without a LaTeX installation
+        rc.update({'text.usetex': False, 'mathtext.fontset': 'cm', 'axes.formatter.use_mathtext': True,
+                   'font.serif': ['cmr10', 'CMU Serif', 'Computer Modern Roman', 'DejaVu Serif']})
+    return rc
+
+
+def wing_out_of_plane(mdl, phi, nodes):
+    """Absolute displacement of each wing node normal to its local wing panel (local z_B, + = up).
+
+    Uses the node's master-element section axes at trim, so on the dihedral outer panels the motion is
+    measured perpendicular to the panel instead of being split across A-frame y and z.
+    """
+    out = []
+    for nd in nodes:
+        zB = crv2rotation(mdl.psi[mdl.master[nd]])[:, 2]
+        zB = zB if zB[2] >= 0 else -zB                     # make + point up on both wings
+        out.append(mdl.u_abs(phi, nd) @ zB)
+    return np.array(out)
+
+
+def wing_kinks(mdl, nodes, min_deg=5.0):
+    """Indices (into nodes) of dihedral kinks: nodes where the UNDEFORMED wing line turns by more than min_deg."""
+    xyz = np.asarray(mdl.case['coordinates'])[nodes]
+    idx = []
+    for k in range(1, len(nodes) - 1):
+        a, b = xyz[k] - xyz[k - 1], xyz[k + 1] - xyz[k]
+        ang = np.degrees(np.arccos(np.clip(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)), -1, 1)))
+        if ang > min_deg:
+            idx.append(k)
+    return idx                                  # indices into `nodes`
+
+
+GROUP_WORD = {'fuselage': 'boom', 'tailplane': 'tailplane', 'fin': 'fin', 'wing': 'wing', 'hub': 'hub'}
+SECONDARY_COLOUR = '#1f5fa8'    # second quantity on a dual-axis plot (right axis), dashed
+
+
+def family_word(group, family):
+    return FAMILY_NAMES.get(group, {}).get(family, family)
+
+
+def mode_title(r):
+    """Plain-English mode name for figure titles, e.g. '1st symmetric wing flapwise bending'; coupled modes get
+    '+ <second type>' from the second-largest strain-energy share."""
+    ordinal = {1: '1st', 2: '2nd', 3: '3rd'}.get(r['order'], f'{r["order"]}th')
+    sym = {'S': 'symmetric', 'A': 'antisymmetric'}.get(r['sym'], 'mixed-symmetry')
+    name = f'{ordinal} {sym} {GROUP_WORD.get(r["group"], r["group"])} {family_word(r["group"], r["family"])}'
+    sec = secondary_of(r)
+    if sec:
+        name += f' + {GROUP_WORD.get(sec[0], sec[0])} {family_word(*sec)}'
+    return name
+
+
+def secondary_of(r):
+    """(group, family) of the second-largest strain-energy share for modes flagged [coupled], else None."""
+    if not r.get('coupled'):
+        return None
+    ranked = sorted(r['U'].items(), key=lambda kv: -kv[1])
+    return ranked[1][0] if len(ranked) > 1 else None
+
+
+# ---- quantities of interest ------------------------------------------------------------------
+def _section_axes(mdl, nd):
+    return crv2rotation(mdl.psi[mdl.master[nd]])            # columns: x_B (beam axis), y_B (chord), z_B (normal)
+
+
+def wing_quantity(mdl, phi, nodes, family):
+    """Wing quantity along the span (total motion = elastic + body motion), in each node's section axes at trim.
+    bend_y  -> out-of-plane displacement w (normal to the local panel, + up)
+    bend_z  -> in-plane (fore-aft) displacement u (in the panel plane, + aft)
+    torsion -> twist theta about the beam axis (+ nose up on both wings)"""
+    out = []
+    for nd in nodes:
+        C = _section_axes(mdl, nd)
+        if family == 'bend_y':
+            n = C[:, 2] if C[2, 2] >= 0 else -C[:, 2]
+            out.append(mdl.u_abs(phi, nd) @ n)
+        elif family == 'bend_z':
+            c = C[:, 1] if C[0, 1] >= 0 else -C[:, 1]
+            out.append(mdl.u_abs(phi, nd) @ c)
+        else:
+            out.append((C.T @ mdl.theta_A(phi, nd))[0] * np.sign(C[1, 0] or 1.0))
+    return np.array(out)
+
+
+def boom_quantity(mdl, phi, nodes, family):
+    """Boom quantity along its length (A-frame; the boom lies along x_A, aft).
+    bend_y -> vertical displacement (z_A, + up); bend_z -> lateral displacement (y_A, + starboard);
+    torsion -> twist about the boom axis (rotation about x_A)."""
+    if family == 'torsion':
+        return np.array([mdl.theta_A(phi, nd)[0] for nd in nodes])
+    k = 2 if family == 'bend_y' else 1
+    return np.array([mdl.u_abs(phi, nd)[k] for nd in nodes])
+
+
+Y_LABELS = {('wing', 'bend_y'): 'Out-of-plane displacement,\n' + r'$w$ (normalised)',
+            ('wing', 'bend_z'): 'In-plane displacement,\n' + r'$u$ (normalised)',
+            ('wing', 'torsion'): 'Twist,\n' + r'$\theta$ (normalised)',
+            ('fuselage', 'bend_y'): 'Vertical displacement,\n' + r'$w$ (normalised)',
+            ('fuselage', 'bend_z'): 'Lateral displacement,\n' + r'$v$ (normalised)',
+            ('fuselage', 'torsion'): 'Twist,\n' + r'$\theta$ (normalised)'}
+
+
+def _norm(v):
+    m = np.abs(v).max()
+    return v / m if m > 0 else v
+
+
+def _curve_px(ax, x, y, n=400):
+    """Densely resampled curve in display (pixel) coordinates, for label-collision checks."""
+    xs = np.linspace(0, 1, n)
+    t = np.linspace(0, 1, len(x))
+    return ax.transData.transform(np.c_[np.interp(xs, t, x), np.interp(xs, t, y)])
+
+
+def _tags(ax, x, y, tags, obstacles):
+    """Open circle on each reference node plus a text tag, placed automatically: candidate positions around the
+    node are tried (inboard-below first, as on mode 10) and the one that overlaps no curve, no other tag and stays
+    inside the axes wins. obstacles = list of (N, 2) pixel arrays of every curve drawn on the figure."""
+    fig = ax.figure
+    for k, _ in tags:
+        ax.plot([x[k]], [y[k]], ls='none', marker='o', ms=5.5, mfc='white', mec='k', mew=0.9, zorder=4)
+    fig.canvas.draw()
+    rend = fig.canvas.get_renderer()
+    axbox = ax.get_window_extent(rend)
+    pts = np.vstack(obstacles)
+    placed = []
+    xc = 0.5 * (x.min() + x.max())
+    for k, text in tags:
+        s_in = -np.sign(x[k] - xc) or 1.0                       # +1: inboard is to the right
+        h_in, h_out = ('left', 'right') if s_in > 0 else ('right', 'left')
+        cands = [(5 * s_in, -5, h_in, 'top'), (5 * s_in, 5, h_in, 'bottom'),
+                 (-5 * s_in, 5, h_out, 'bottom'), (-5 * s_in, -5, h_out, 'top'),
+                 (0, 7, 'center', 'bottom'), (0, -7, 'center', 'top')]
+        best, best_score = None, None
+        for dx, dy, ha, va in cands:
+            ann = ax.annotate(text, (x[k], y[k]), xytext=(dx, dy), textcoords='offset points', ha=ha, va=va,
+                              fontsize=PAPER_FONT_PT - 1, linespacing=1.0, multialignment='center')
+            ann.set_in_layout(False)
+            bb = ann.get_window_extent(rend).expanded(1.06, 1.12)
+            inside = (bb.x0 >= axbox.x0 and bb.x1 <= axbox.x1 and bb.y0 >= axbox.y0 and bb.y1 <= axbox.y1)
+            hits = np.sum((pts[:, 0] > bb.x0) & (pts[:, 0] < bb.x1) & (pts[:, 1] > bb.y0) & (pts[:, 1] < bb.y1))
+            clash = sum(bb.overlaps(o) for o in placed)
+            score = hits + 1000 * clash + (0 if inside else 500)
+            if best_score is None or score < best_score:
+                if best is not None:
+                    best[0].remove()
+                best, best_score = (ann, bb), score
+            else:
+                ann.remove()
+            if score == 0:
+                break
+        placed.append(best[1])
+
+
+def _headroom(ax, *curves):
+    v = np.concatenate(curves)
+    rng = (v.max() - v.min()) or 1.0
+    ax.set_ylim(v.min() - 0.25 * rng, v.max() + 0.25 * rng)
+
+
+class _Layout:
+    """Node lists, normalised positions and reference nodes for the wing and boom panels."""
+    def __init__(self, mdl):
+        self.wing = sorted([nd for nd in range(len(mdl.pos)) if mdl.node_comp.get(nd) in ('R wing', 'L wing', 'hub')],
+                           key=lambda nd: mdl.pos[nd, 1])
+        y = mdl.pos[self.wing, 1]
+        self.eta = y / np.abs(y).max()
+        self.wing_tags = [(int(np.argmin(np.abs(y))), 'centre (hub)')] + \
+                         [(k, 'dihedral\nkink') for k in wing_kinks(mdl, self.wing)]
+        self.boom = sorted([nd for nd in range(len(mdl.pos)) if mdl.node_comp.get(nd) in ('fuselage', 'hub')],
+                           key=lambda nd: mdl.pos[nd, 0])
+        x = mdl.pos[self.boom, 0]
+        self.xi = (x - x.min()) / ((x.max() - x.min()) or 1.0)
+        self.boom_tags = [(0, 'hub'), (len(self.boom) - 1, 'tail')]
+
+    def panel(self, mdl, phi, group, family):
+        if group == 'wing':
+            return self.eta, _norm(wing_quantity(mdl, phi, self.wing, family)), self.wing_tags, \
+                r'Spanwise position, $y/(b/2)$', (-1.05, 1.05)
+        return self.xi, _norm(boom_quantity(mdl, phi, self.boom, family)), self.boom_tags, \
+            r'Position along boom, $x/L_{\mathrm{boom}}$', (-0.03, 1.03)
+
+
+def _style_axis(ax, x, ylab, xlab, xlim):
+    ax.axhline(0, color='0.6', lw=0.5, zorder=1)
+    ax.set_xlim(*xlim)
+    ax.set_xlabel(xlab)
+    ax.set_ylabel(ylab, linespacing=1.1)
+    ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator(0.5))
+
+
+def plot_modes_clean(mdl, rows, outdir):
+    """Clean, publication-style mode-shape plots: only the quantities of interest for each mode.
+
+    Single type (e.g. wing flapwise bending): one curve on one axis.
+    Coupled, same component (e.g. wing torsion + wing in-plane bending): dual y-axis - primary on the left
+      (black, solid), secondary on the right (blue, dashed, blue axis).
+    Coupled, different components (e.g. boom vertical bending + wing torsion): two panels side by side
+      (wing span | boom length), each with its own quantity.
+    Sign: SHARPy's eigenvector sign unchanged (same half-cycle as the ParaView mode files).
+    Displacement: total perturbation (elastic + body motion) about trim; static dihedral/trim deflection excluded.
+    Each quantity is normalised to max |value| = 1 (eigenvector scale is arbitrary).
+    Format: paper_rc(); wide and short; title = mode number, name and frequency; PDF (vector) + PNG.
+    """
+    pdir = os.path.join(outdir, 'mode_shapes_clean')
+    os.makedirs(pdir, exist_ok=True)
+    L = _Layout(mdl)
+    sel = (lambda m: True) if CLEAN_MODE_PLOTS == 'all' else (lambda m: m in CLEAN_MODE_PLOTS)
+    for r in rows:
+        if r['kind'] != 'elastic' or not sel(r['mode']):
+            continue
+        prim = ('fuselage' if r['group'] in ('fuselage', 'hub') else r['group'], r['family'])
+        sec = secondary_of(r)
+        sec = ('fuselage' if sec and sec[0] == 'hub' else sec[0], sec[1]) if sec else None
+        if prim not in Y_LABELS or (sec and sec not in Y_LABELS):
+            print(f'[clean plot] mode {r["mode"]} ({r["label"]}): component not supported yet - skipped')
+            continue
+        phi = mdl.V[:, r['mode']]
+        title = f'Mode {r["mode"]}: {mode_title(r)}, {r["f"]:.2f} Hz'
+        with plt.rc_context(paper_rc()):
+            W, H = PAPER_FIG_WIDTH_IN, PAPER_FIG_ASPECT * PAPER_FIG_WIDTH_IN
+            if sec is None or sec[0] == prim[0]:
+                fig, ax = plt.subplots(figsize=(W, H))
+                x, q, tags, xlab, xlim = L.panel(mdl, phi, *prim)
+                ax.plot(x, q, color='k', lw=1.0, marker='o', ms=2.2, zorder=3)
+                curves = [q]
+                if sec:                                          # dual y-axis, same component
+                    ax2 = ax.twinx()
+                    _, q2, _, _, _ = L.panel(mdl, phi, *sec)
+                    ax2.plot(x, q2, color=SECONDARY_COLOUR, lw=1.0, ls='--', marker='o', ms=2.2, mfc='white',
+                             zorder=2)
+                    ax2.set_ylabel(Y_LABELS[sec], color=SECONDARY_COLOUR, linespacing=1.1)
+                    ax2.tick_params(axis='y', which='both', colors=SECONDARY_COLOUR, right=True)
+                    ax2.spines['right'].set_color(SECONDARY_COLOUR)
+                    ax2.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator(0.5))
+                    ax.tick_params(axis='y', which='both', right=False)
+                    _headroom(ax2, q, q2)
+                    curves.append(q2)
+                _style_axis(ax, x, Y_LABELS[prim], xlab, xlim)
+                _headroom(ax, *curves)
+                ax.set_title(title, fontsize=PAPER_FONT_PT + 1, pad=4)
+                fig.tight_layout(pad=0.3)
+                obs = [_curve_px(ax, x, q)] + ([_curve_px(ax2, x, q2)] if sec else [])
+                _tags(ax, x, q, tags, obs)
+            else:                                                # coupled across components: wing | boom
+                fig, axs = plt.subplots(1, 2, figsize=(W, H), gridspec_kw=dict(width_ratios=[2, 1]))
+                for ax, comp in zip(axs, ('wing', 'fuselage')):
+                    fam = prim[1] if prim[0] == comp else sec[1]
+                    x, q, tags, xlab, xlim = L.panel(mdl, phi, comp, fam)
+                    ax.plot(x, q, color='k', lw=1.0, marker='o', ms=2.2, zorder=3)
+                    _style_axis(ax, x, Y_LABELS[(comp, fam)], xlab, xlim)
+                    _headroom(ax, q)
+                    ax._llta_curve = (x, q, tags)
+                fig.suptitle(title, fontsize=PAPER_FONT_PT + 1, y=0.99)
+                fig.tight_layout(pad=0.3)
+                for ax in axs:
+                    x, q, tags = ax._llta_curve
+                    _tags(ax, x, q, tags, [_curve_px(ax, x, q)])
+            for ext in ('pdf', 'png'):
+                fig.savefig(os.path.join(pdir, f'mode_{r["mode"]:02d}.{ext}'), dpi=300)
+            plt.close(fig)
+
+
 def plot_modes(mdl, rows, outdir):
     pdir = os.path.join(outdir, 'mode_shapes')
     os.makedirs(pdir, exist_ok=True)
@@ -710,7 +883,7 @@ def plot_modes(mdl, rows, outdir):
     tail_nodes = sorted([nd for nd in range(len(mdl.pos)) if mdl.node_comp.get(nd) in ('R tail', 'L tail')],
                         key=lambda nd: mdl.pos[nd, 1])
     for r in rows:
-        if r['kind'] != 'elastic':
+        if r['kind'] != 'elastic' or not MODE_PLOT_DIAGNOSTIC:
             continue
         phi = mdl.V[:, r['mode']]
         U = {nd: mdl.u_abs(phi, nd) for nd in range(len(mdl.pos))}
@@ -1339,8 +1512,6 @@ def main():
     resolve_symmetric(mdl, log)
     log.info('--- Step 3: rigid-body modes ---')
     rig, is_rigid = rigid_analysis(mdl, log)
-    if MAKE_RIGID_ARGAND:
-        argand_rigid(mdl, rig, is_rigid, mp, RESULTS_DIR, log)
     log.info('--- Step 4: elastic modes ---')
     rows = classify(mdl, rig, is_rigid, log)
     cov = [r['coverage'] for r in rows if r['kind'] == 'elastic']
@@ -1357,6 +1528,7 @@ def main():
     write_tables(rows, RESULTS_DIR)
     if MAKE_MODE_PLOTS:
         plot_modes(mdl, rows, RESULTS_DIR)
+        plot_modes_clean(mdl, rows, RESULTS_DIR)
     list_vtk(RESULTS_DIR, log)
     open(os.path.join(RESULTS_DIR, 'checks_log.txt'), 'w').write('\n'.join(log.lines) + '\n')
     print(f'\nResults written to {RESULTS_DIR}')
