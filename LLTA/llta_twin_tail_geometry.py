@@ -28,7 +28,7 @@ import numpy as np
 # =====================================================================================
 
 # SCALING (Froude / aeroelastic similitude, LLTA -> full scale)
-scale = 3.0                         # full scale / LLTA
+scale = 1.0                         # full scale / LLTA
 s_len = scale                       # length
 s_mass = scale**3                   # mass (same density, geometric scaling)  -> lumped masses
 s_mpl = scale**2                    # mass per unit length

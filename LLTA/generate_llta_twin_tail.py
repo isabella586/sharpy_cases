@@ -12,7 +12,7 @@ import argparse
 # Geometry/mass/stiffness come from llta_fullscale_geometry.py - see the GAP REGISTER at the top of that file.
 # Topology: wing (R/L, with dihedral) + centre pod at node 0 + TWO tail booms attached at the dihedral kinks,
 #           each boom carrying a fin/rudder and a tailplane/elevator centred on the boom.
-case_name = 'llta_fullscale_twin_tail'
+case_name = 'llta_llta_twin_tail'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 #Added for doing a u_inf sweep (but trim position might be different???)
@@ -45,7 +45,7 @@ route = os.path.dirname(os.path.realpath(__file__)) + '/'
         ]'''
 
 # Static trim and structural modes
-'''flow = ['BeamLoader',
+flow = ['BeamLoader',
         'AerogridLoader',
         'StaticCoupled',
         'StaticTrim',
@@ -54,10 +54,10 @@ route = os.path.dirname(os.path.realpath(__file__)) + '/'
         'AerogridPlot',
         'AeroForcesCalculator',
         'SaveData',
-        ]'''
+        ]
 
 # Aerodynamic damping and aeroelastic modes
-flow = ['BeamLoader',
+'''flow = ['BeamLoader',
         'AerogridLoader',
         'StaticCoupled',
         'StaticTrim',
@@ -69,7 +69,7 @@ flow = ['BeamLoader',
         'AerogridPlot',
         'AeroForcesCalculator',
         'SaveData',
-        ]
+        ]'''
 
 # if free_flight is False, the motion of the centre of the wing is prescribed.
 free_flight = True #This is clamp on/off
@@ -82,7 +82,7 @@ if not free_flight:
 # FLIGHT CONDITIONS
 # the simulation is set such that the aircraft flies at a u_inf velocity while
 # the air is calm.
-u_inf = fs.cruise_speed                                 # Freestream velocity (SI units) [GAP-8] 6.5 m/s x sqrt(3) Froude-scaled LLTA cruise speed
+u_inf = 9                                 # Freestream velocity (SI units) [GAP-8] 6.5 m/s x sqrt(3) Froude-scaled LLTA cruise speed
 #Note: u_inf commented while doing run sweep of velocities
 rho = 1.225                                              # Density (SI units) - 400ft flight test is 1.231 kg/m3 density. Sea level 1.225. 10km 0.4137
 
