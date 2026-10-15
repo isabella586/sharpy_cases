@@ -8,7 +8,7 @@ import math
 import sharpy.sharpy_main 
 import argparse
 
-case_name = 'llta_natural_modes_fuselage_stiffness'
+case_name = 'llta_fixed_trim_sweep_clamped'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 #Added for doing a u_inf sweep (but trim position might be different???)
@@ -68,7 +68,7 @@ flow = ['BeamLoader',
         ]
 
 # if free_flight is False, the motion of the centre of the wing is prescribed.
-free_flight = True #This is clamp on/off
+free_flight = False #This is clamp on/off
 if not free_flight:
     case_name += '_prescribed'
     amplitude = 0 * np.pi / 180
@@ -1007,13 +1007,12 @@ def generate_solver_file():
                                                   'gravity_on': gravity,
                                                   'gravity': 9.81,
                                                   'num_steps': n_tstep,
-                                                  'dt': dt,
-                                                  'initial_velocity': u_inf * int(free_flight)}
+                                                  'dt': dt}
 
     
     #Solver settings for modal analysis - all settings delcared and set to defaults - [COMPARE AGAINST GENERATE_HALE_INTERIM]
     settings['Modal'] = {'print_info': True,
-                         'rigid_body_modes': True, #generate_hale.py set to True
+                         'rigid_body_modes': False, #Set to false for clamped cases. Generate_hale.py set to True
                          'use_undamped_modes': True,
                          'NumLambda': 30, #generate_hale.py set to 30, this doubles if use_undamped_modes is set to False
                          'write_modes_vtk': True,
@@ -1026,7 +1025,7 @@ def generate_solver_file():
                          #'max_rotation_deg': 15.0, # Not defined in Horton example, what is the default?
                          #'max_displacement': 0.15, # Not defined in Horton example, what is the default?
                          #'use_custom_timestep': -1, # Not defined in Horton example, what is the default?
-                         'rigid_modes_ppal_axes': True, # Not defined in Horton example, what is the default?
+                         'rigid_modes_ppal_axes': False, # Set to false for clamped cases. Not defined in Horton example, what is the default?
                          'rigid_modes_cg': False} # False in Horton example - NOTE: this is not implemented in SHARPy (according to modal.py comments)
 
     relative_motion = 'off'
@@ -1116,10 +1115,13 @@ def generate_solver_file():
                                                          'density': rho,
                                                          'remove_predictor': False,
                                                          'use_sparse': 'off', # Was True, set to 'off' in Horton example
-                                                         'remove_inputs': ['u_gust']},
+                                                         'remove_inputs': ['u_gust'],
+                                                         'ScalingDict': {'length': 0.5 * chord_main, # For non-dimensional aerodynamic model for velocity sweep at set trim
+                                                                         'speed': u_inf,
+                                                                         'density': rho}},
                                        'track_body': 'on', # Added setting in Horton example
-                                       'use_euler': 'on', # Added setting in Horton example
-                                   }}
+                                       'use_euler': 'on',} # Added setting in Horton example
+                                   }
 
     settings['AsymptoticStability'] = {'target_system': ['aeroelastic'],
                                        #'modes_to_plot': [], # Not set in Horton example, what is the default?
@@ -1127,6 +1129,8 @@ def generate_solver_file():
                                        'frequency_cutoff': 0,
                                        'export_eigenvalues': True, # Not set in Horton example, what is the default?
                                        'num_evals': 400,
+                                       'reference_velocity': u_inf,
+                                       'velocity_analysis': [5, 10, 16],
                                        'print_info': True} # was 40, Set to 100 in Horton example
     
     settings['SaveData'] = {'save_aero': True}
