@@ -8,7 +8,7 @@ import math
 import sharpy.sharpy_main 
 import argparse
 
-case_name = 'llta_fixed_trim_sweep_clamped'
+case_name = 'llta_9ms_aeroelastic_unclamped'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 #Added for doing a u_inf sweep (but trim position might be different???)
@@ -68,7 +68,7 @@ flow = ['BeamLoader',
         ]
 
 # if free_flight is False, the motion of the centre of the wing is prescribed.
-free_flight = False #This is clamp on/off
+free_flight = True #This is clamp on/off
 if not free_flight:
     case_name += '_prescribed'
     amplitude = 0 * np.pi / 180
@@ -162,7 +162,7 @@ print("Offset of CG from elastic axis for main wing is:", cg_offset_main)
 
 length_fuselage = llta.length_fuselage
 offset_fuselage = 0                       # This is a fuselage that is angled - currently not needed
-sigma_fuselage = 1.4                      # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
+#sigma_fuselage = 1.4                      # Scaling factor on top of sigma for fuselage stiffness - Voltitude assume same across board
 m_bar_fuselage = llta.m_bar_fuselage
 j_bar_fuselage = llta.j_bar_fuselage # SPAR J -> material density * (pi/32)*(OD^4-ID^4) rotational inertia per unit length (all three rotational DOFs), was carried over from generate_hale -> 0.08 (not correct) 
 
@@ -302,9 +302,9 @@ n_stiffness = 4
 base_stiffness_main = sigma * np.diag([ea, ga, ga, gj, eiy, eiz])
 #base_stiffness_fuselage = base_stiffness_main.copy() * sigma_fuselage
 base_stiffness_fuselage = np.diag([ea, ga, ga, llta.gj_fuselage, llta.eiy_fuselage, llta.eiz_fuselage])
-base_stiffness_fuselage[4, 4] = base_stiffness_fuselage[5, 5] 
+#base_stiffness_fuselage[4, 4] = base_stiffness_fuselage[5, 5] 
 base_stiffness_tail = base_stiffness_main.copy() * sigma_tail
-base_stiffness_tail[4, 4] = base_stiffness_tail[5, 5] 
+#base_stiffness_tail[4, 4] = base_stiffness_tail[5, 5] 
 
 n_mass = 4
 # This was the original (and only line) -> base_mass_main = np.diag([m_bar_main, m_bar_main, m_bar_main, j_bar_main, 0.5 * j_bar_main, 0.5 * j_bar_main])
@@ -1012,7 +1012,7 @@ def generate_solver_file():
     
     #Solver settings for modal analysis - all settings delcared and set to defaults - [COMPARE AGAINST GENERATE_HALE_INTERIM]
     settings['Modal'] = {'print_info': True,
-                         'rigid_body_modes': False, #Set to false for clamped cases. Generate_hale.py set to True
+                         'rigid_body_modes': True, #Set to false for clamped cases. Generate_hale.py set to True
                          'use_undamped_modes': True,
                          'NumLambda': 30, #generate_hale.py set to 30, this doubles if use_undamped_modes is set to False
                          'write_modes_vtk': True,
@@ -1025,7 +1025,7 @@ def generate_solver_file():
                          #'max_rotation_deg': 15.0, # Not defined in Horton example, what is the default?
                          #'max_displacement': 0.15, # Not defined in Horton example, what is the default?
                          #'use_custom_timestep': -1, # Not defined in Horton example, what is the default?
-                         'rigid_modes_ppal_axes': False, # Set to false for clamped cases. Not defined in Horton example, what is the default?
+                         'rigid_modes_ppal_axes': True, # Set to false for clamped cases. Not defined in Horton example, what is the default?
                          'rigid_modes_cg': False} # False in Horton example - NOTE: this is not implemented in SHARPy (according to modal.py comments)
 
     relative_motion = 'off'
@@ -1036,7 +1036,7 @@ def generate_solver_file():
                             'convection_scheme': 2, # set by 'wake_type' in Horton example
                             'gamma_dot_filtering': 3, # Was set at 6, changed to 3 in Horton example
                             'velocity_field_generator': 'SteadyVelocityField', # Was GustVelocityField, changed to Steady velocity field used in Horton example
-                            'velocity_field_input': {'u_inf': u_inf*0, # Was u_inf previously, changed to match Horton example, previously int(not free_flight) * u_inf, 0 in Horton example
+                            'velocity_field_input': {'u_inf': int(not free_flight)*u_inf, #u_inf*0, # Was u_inf previously, changed to match Horton example, previously int(not free_flight) * u_inf, 0 in Horton example
                                                      'u_inf_direction': [1., 0, 0],},
                                                      #'gust_shape': '1-cos', # Not used in Horton example
                                                      #'gust_parameters': {'gust_length': gust_length, # Not used in Horton example
@@ -1115,13 +1115,13 @@ def generate_solver_file():
                                                          'density': rho,
                                                          'remove_predictor': False,
                                                          'use_sparse': 'off', # Was True, set to 'off' in Horton example
-                                                         'remove_inputs': ['u_gust'],
-                                                         'ScalingDict': {'length': 0.5 * chord_main, # For non-dimensional aerodynamic model for velocity sweep at set trim
-                                                                         'speed': u_inf,
-                                                                         'density': rho}},
-                                       'track_body': 'on', # Added setting in Horton example
-                                       'use_euler': 'on',} # Added setting in Horton example
-                                   }
+                                                         'remove_inputs': ['u_gust'],},
+                                                         #'ScalingDict': {'length': 0.5 * chord_main, # For non-dimensional aerodynamic model for velocity sweep at set trim
+                                                         #                'speed': u_inf,
+                                                         #                'density': rho}},
+                                       'track_body': 'on', # Turned off for clamped run. Added setting in Horton example
+                                       'use_euler': 'on',} # Turned off for clamped run. Added setting in Horton example
+                                        }
 
     settings['AsymptoticStability'] = {'target_system': ['aeroelastic'],
                                        #'modes_to_plot': [], # Not set in Horton example, what is the default?
@@ -1129,8 +1129,8 @@ def generate_solver_file():
                                        'frequency_cutoff': 0,
                                        'export_eigenvalues': True, # Not set in Horton example, what is the default?
                                        'num_evals': 400,
-                                       'reference_velocity': u_inf,
-                                       'velocity_analysis': [5, 10, 16],
+                                       #'reference_velocity': u_inf,
+                                       #'velocity_analysis': [5, 10, 16],
                                        'print_info': True} # was 40, Set to 100 in Horton example
     
     settings['SaveData'] = {'save_aero': True}

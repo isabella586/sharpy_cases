@@ -44,7 +44,7 @@ import matplotlib.pyplot as plt
 # =====================================================================================
 # CONFIG - edit for each run
 # =====================================================================================
-CASE_NAME = 'llta_trim_u_inf_9__wingincidence'
+CASE_NAME = 'llta_9ms_aeroelastic_unclamped'
 MODEL_TAG = 'M2 - section inertias'
 CASE_ROUTE = os.path.dirname(os.path.realpath(__file__))        # folder holding <case>.fem.h5
 OUTPUT_ROUTE = os.path.join(CASE_ROUTE, 'output', CASE_NAME)       # SHARPy output folder for this case
