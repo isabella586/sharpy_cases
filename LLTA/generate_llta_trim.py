@@ -1124,7 +1124,7 @@ def generate_solver_file():
                                         }
 
     settings['AsymptoticStability'] = {'target_system': ['aeroelastic'],
-                                       #'modes_to_plot': [], # Not set in Horton example, what is the default?
+                                       'modes_to_plot': [11, 12], # Not set in Horton example, what is the default?
                                        #'display_root_locus': 'off', # Not set in Horton example, what is the default?
                                        'frequency_cutoff': 0,
                                        'export_eigenvalues': True, # Not set in Horton example, what is the default?
@@ -1133,7 +1133,8 @@ def generate_solver_file():
                                        #'velocity_analysis': [5, 10, 16],
                                        'print_info': True} # was 40, Set to 100 in Horton example
     
-    settings['SaveData'] = {'save_aero': True}
+    settings['SaveData'] = {'save_aero': True,
+                            'save_linear': True,}
 
     settings['LiftDistribution'] = {'rho': rho}
 
