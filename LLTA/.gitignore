@@ -18,11 +18,13 @@ archived_scripts/
 # Logs
 *.log
 *.txt
+*.ulg
 
 # Python cache
 __pycache__/
 *.pyc
 *.pyo
+*.npy
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
