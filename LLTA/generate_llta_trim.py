@@ -8,7 +8,7 @@ import math
 import sharpy.sharpy_main 
 import argparse
 
-case_name = 'llta_9ms_aeroelastic_unclamped'
+case_name = 'llta_9ms_aeroelastic_unclamped_2'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 #Added for doing a u_inf sweep (but trim position might be different???)
@@ -1128,7 +1128,7 @@ def generate_solver_file():
                                        #'display_root_locus': 'off', # Not set in Horton example, what is the default?
                                        'frequency_cutoff': 0,
                                        'export_eigenvalues': True, # Not set in Horton example, what is the default?
-                                       'num_evals': 400,
+                                       'num_evals': 400, #previously 400
                                        #'reference_velocity': u_inf,
                                        #'velocity_analysis': [5, 10, 16],
                                        'print_info': True} # was 40, Set to 100 in Horton example

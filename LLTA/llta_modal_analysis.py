@@ -19,7 +19,7 @@ Steps (numbers follow the LLTA modal-analysis process):
                                bending about z_B) from beam curvatures; kinetic energy by component;
                                symmetric/antisymmetric index; nodal points; coupling flag; label
   Step 5  Hand estimates     - matched to the auto-labelled modes
-  Step 6  Aeroelastic   - AsymptoticStability eigenvalues: wake / flight-dynamics / elastic classification,
+  Step 6  Aeroelastic   - AsymptoticStability eigenvalues: wake / rigid-body / elastic classification,
                           structural-mode tracking, frequency-compression correction, aerodynamic damping,
                           optional low-density reference for numerical damping
   Step 7  Outputs            - mode table (CSV + Markdown), checks log, mode-shape plots, VTK file list
@@ -57,17 +57,26 @@ CLEAN_MODE_PLOTS = 'all'     # 'all' or a list of mode numbers for the clean pub
 PAPER_FIG_WIDTH_IN = 7.0     # clean mode plots: figure width (in); 7.0 = full text width, 3.5 = single journal column
 PAPER_FIG_ASPECT = 0.32      # clean mode plots: height / width - wide and short to suit a high-aspect-ratio wing
 PAPER_FONT_PT = 9            # clean mode plots: label font size (pt); ticks/tags 1 pt smaller
-ARGAND_DECADES = 3           # flight-dynamics Argand (Step 6): arrow length log10 scaled over this many decades
 ANALYSE_STABILITY = True     # read AsymptoticStability output (Step 6) if a stability folder exists
 STABILITY_DIR = None         # None = OUTPUT_ROUTE/stability
 REFERENCE_STABILITY_DIR = None  # stability folder of a LOW-DENSITY run of the same case (numerical damping),
                              # e.g. os.path.join(CASE_ROUTE, 'output', 'llta_modes_aerodynamics_low_rho', 'stability')
 WAKE_STRUCT_FRACTION = 1e-11 # eigenvectors with less structural content than this are labelled wake (aero) states
-FLIGHT_MIN_STRUCT_FRACTION = 1e-9  # heave/pitch-dominated eigenvalues below this are wake-ladder states
+FLIGHT_MIN_STRUCT_FRACTION = 1e-4  # heave/pitch-dominated eigenvalues below this are wake-ladder states
 UNWARP_FREQUENCIES = True    # undo the discrete-time frequency compression: s = (2/dt) tanh(s_obs dt/2)
 SHOW_WAKE_STATES = False     # clean eigenvalue figures only; the diagnostic figure always shows the wake states
 ELASTIC_ZOOM_FMAX = 10.5     # Hz, upper limit of the clean low-frequency elastic figure
 FLIGHT_ZOOM = dict(fmax=2.75, re_min=-17.0)  # clean flight-dynamics figure: damped-frequency and real-part limits
+# Flight-dynamics modes are NOT identified by this script. They are identified in mode_contributions_restructured.py
+# (Q1 wake-length test, Q2 rigid/flexible split, Q3 physical checks). List here the modes it identified for each case,
+# as SHARPy eigenvalues (rad/s, as in aeroelastic_eigenvalues.dat). Only these get a flight-mode name; every other
+# rigid-dominated pole is drawn as a plain diamond and reported as 'rigid-body pole, not identified'.
+IDENTIFIED_FLIGHT_MODES = {
+    'llta_9ms_aeroelastic_unclamped': [('Phugoid', -0.0185 + 0.6518j),        # mode_contributions, 4-5 Nov 2026
+                                       ('Spiral', -0.1070 + 0.0j),            # (mstar 100 / 146 / 167 / 250)
+                                       ('Dutch roll', -0.4718 + 2.7412j)],
+}
+FLIGHT_MATCH_TOL = 1e-2      # a pole matches a listed mode if |lambda - lambda_listed| <= this x |lambda_listed|
 
 # Beam numbers as written by generate_llta_trim.py
 BEAM_NAMES = {0: 'R wing', 1: 'L wing', 2: 'fuselage', 3: 'fin', 4: 'R tail', 5: 'L tail'}
@@ -614,6 +623,23 @@ def paper_rc():
                    'font.serif': ['cmr10', 'CMU Serif', 'Computer Modern Roman', 'DejaVu Serif']})
     return rc
 
+def paper_axes(ax):
+    """Paper style on an axes that has already been drawn: no grid, black box on all four sides, inward ticks,
+    black labels. Use after plotting, because some plot functions set presentation styling of their own."""
+    ax.grid(False)
+    for sp in ax.spines.values():
+        sp.set_visible(True)
+        sp.set_color('k')
+    ax.tick_params(which='both', colors='k', top=True, right=True, direction='in')
+    ax.xaxis.label.set_color('k')
+    ax.yaxis.label.set_color('k')
+
+def cm_safe(text):
+    """Plain text that renders in Computer Modern (cmr10): cmr10 has no _, |, <, > or middle-dot glyphs, so these are
+    drawn as maths instead. Use on plain text only (not on strings that already contain $...$)."""
+    for a, b in (('_', r'$\_$'), ('|', r'$|$'), ('<', r'$<$'), ('>', r'$>$'), ('·', r'$\cdot$')):
+        text = text.replace(a, b)
+    return text
 
 def wing_out_of_plane(mdl, phi, nodes):
     """Absolute displacement of each wing node normal to its local wing panel (local z_B, + = up).
@@ -896,22 +922,22 @@ def plot_modes(mdl, rows, outdir):
         for k, (lab, col) in enumerate([('x (fore-aft)', COL[1]), ('y (spanwise)', COL[3]), ('z (vertical)', COL[0])]):
             ax[0].plot(y, [U[nd][k] / scale for nd in wing_nodes], color=col, lw=2, marker='o', ms=3, label=lab)
         ax[0].set_title('Wing absolute displacement (A-frame)', fontsize=10, color=INK, loc='left')
-        ax[0].set_xlabel('y_A (m)')
+        ax[0].set_xlabel(r'$y_A$ (m)')
         ax[1].plot(y, tw / max(np.abs(tw).max(), 1e-30), color=COL[2], lw=2, marker='o', ms=3)
         ax[1].set_title('Wing elastic twist, nose-up positive (normalised)', fontsize=10, color=INK, loc='left')
-        ax[1].set_xlabel('y_A (m)')
+        ax[1].set_xlabel(r'$y_A$ (m)')
         for nodes, coord, lab, col, k in [(fus_nodes, 0, 'fuselage z', COL[0], 2), (fus_nodes, 0, 'fuselage y', COL[3], 1),
-                                          (tail_nodes, 1, 'tailplane z (vs y_A)', COL[4], 2), (fin_nodes, 2, 'fin y (vs z_A)', COL[5], 1)]:
+                                          (tail_nodes, 1, r'tailplane z (vs $y_A$)', COL[4], 2), (fin_nodes, 2, r'fin y (vs $z_A$)', COL[5], 1)]:
             if nodes:
                 ax[2].plot(mdl.pos[nodes, coord], [U[nd][k] / scale for nd in nodes], color=col, lw=2, marker='o', ms=3, label=lab)
         ax[2].set_title('Fuselage, tailplane, fin', fontsize=10, color=INK, loc='left')
         ax[2].set_xlabel('position along component (m)')
         for a in ax:
-            a.axhline(0, color=MUTED, lw=0.8); a.grid(color=GRID, lw=0.6)
-            a.spines[['top', 'right']].set_visible(False)
-            a.tick_params(colors=MUTED, labelsize=8)
+            a.axhline(0, color=MUTED, lw=0.8)
+            paper_axes(a)
+            a.tick_params(labelsize=8)
         ax[0].legend(fontsize=8, frameon=False); ax[2].legend(fontsize=8, frameon=False)
-        fig.suptitle(f'Mode {r["mode"]}  |  {r["f"]:.3f} Hz  |  {r["label"]}', fontsize=12, color=INK, x=0.01, ha='left')
+        fig.suptitle(cm_safe(f'Mode {r["mode"]}  |  {r["f"]:.3f} Hz  |  {r["label"]}'), fontsize=12, color=INK, x=0.01, ha='left')
         fig.tight_layout()
         fig.savefig(os.path.join(pdir, f'mode_{r["mode"]:02d}.png'), dpi=130)
         plt.close(fig)
@@ -933,9 +959,9 @@ def plot_modes(mdl, rows, outdir):
     ax.set_yticks(yy)
     ax.set_yticklabels([f'{r["mode"]}  {r["f"]:.2f} Hz  ({r["sym"]})' for r in el], fontsize=8, color=INK)
     ax.set_xlim(0, 1); ax.set_xlabel('Share of beam strain energy', color=MUTED)
-    ax.spines[['top', 'right']].set_visible(False); ax.tick_params(colors=MUTED, labelsize=8)
+    paper_axes(a)
     ax.legend(ncol=4, fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(0, -0.08))
-    ax.set_title(f'{CASE_NAME} ({MODEL_TAG}): what deforms in each elastic mode', loc='left', color=INK, fontsize=11)
+    ax.set_title(cm_safe(f'{CASE_NAME} ({MODEL_TAG}): what deforms in each elastic mode'), loc='left', color=INK, fontsize=11)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, 'strain_energy_summary.png'), dpi=140)
     plt.close(fig)
@@ -1043,17 +1069,11 @@ def analyse_eigenvalues(lam, S, tot, lin, freq_struct, struct_labels, log, tag='
         elif sfrac < WAKE_STRUCT_FRACTION:
             cat, name = 'aero', 'aerodynamic (wake) state'
         elif rig_share > 0.5:
-            cat = 'flight'
-            d = rnames[int(np.argmax(e[:n_rig]))]
-            if abs(s.imag) < 1e-6:
-                name = {'p': 'roll subsidence?', 'psi': 'spiral?', 'phi': 'spiral?', 'r': 'spiral?'}.get(d, f'real root ({d})?')
-            elif d == 'p':
-                name = 'roll subsidence (wake-coupled pair)?' if zeta > 0.7 else 'roll oscillation?'
-            elif d in ('w', 'q', 'theta') and sfrac < FLIGHT_MIN_STRUCT_FRACTION:
-                cat, name = 'aero', 'aero lag state coupled to heave/pitch'   # wake-ladder member, not a rigid-body mode
-            else:
-                name = {'u': 'phugoid?', 'v': 'Dutch roll?', 'r': 'Dutch roll?', 'w': 'short period / heave?',
-                        'q': 'short period?', 'theta': 'short period?'}.get(d, f'oscillatory ({d})?')
+            # rigid-dominated structural content. No flight-mode name is given here: content alone cannot separate
+            # a flight mode from a wake pole that carries rigid-body motion (see IDENTIFIED_FLIGHT_MODES)
+            cat, name = 'flight', 'rigid-body pole, not identified'
+            if sfrac < FLIGHT_MIN_STRUCT_FRACTION:
+                cat, name = 'aero', 'wake state with rigid-body content'   # wake-ladder member, not a rigid-body mode
         else:
             cat, name = 'elastic', coord_name[dom]
         top = np.argsort(-e)[:3]
@@ -1061,6 +1081,21 @@ def analyse_eigenvalues(lam, S, tot, lin, freq_struct, struct_labels, log, tag='
                          cat=cat, name=name, dom=dom, share=e, rig_share=rig_share,
                          content=', '.join(f'{coord_name[j].split(" [")[0]} {e[j]:.2f}' for j in top if e[j] > 0.02),
                          q=q[:, k]))
+    # flight-mode names only for the modes identified in mode_contributions_restructured.py
+    for r in rows:
+        r['flight_id'] = None
+    listed = IDENTIFIED_FLIGHT_MODES.get(CASE_NAME, [])
+    if not listed:
+        log.info(f'{tag}no identified flight modes listed for {CASE_NAME} (IDENTIFIED_FLIGHT_MODES): '
+                 'rigid-body poles are drawn unlabelled')
+    for nm, lam_ref in listed:
+        near = [r for r in rows if abs(r['s'] - lam_ref) <= FLIGHT_MATCH_TOL * abs(lam_ref)]
+        log.check(f'{tag}identified flight mode "{nm}" ({lam_ref.real:.4f}{lam_ref.imag:+.4f}j) found in this run',
+                  bool(near), 'missing: rerun mode_contributions_restructured.py and update IDENTIFIED_FLIGHT_MODES'
+                  if not near else f'eig {min(near, key=lambda r: abs(r["s"] - lam_ref))["eig"]}')
+        if near:
+            r = min(near, key=lambda r: abs(r['s'] - lam_ref))
+            r['flight_id'], r['name'], r['cat'] = nm, nm, 'flight'
     counts = {c: sum(r['cat'] == c for r in rows) for c in ['zero', 'flight', 'elastic', 'aero']}
     log.info(f'{tag}eigenvalues (upper half-plane): {counts}')
     unstable = [r for r in rows if r['s'].real > 1e-6]
@@ -1128,7 +1163,6 @@ def stability_step(mdl, rows_struct, log):
     plot_root_locus_diagnostic(rows, trk, freq_struct, lin, has_ref, RESULTS_DIR)
     plot_eigenvalues_clean(rows, trk, freq_struct, lin, has_ref, RESULTS_DIR)
     plot_damping(trk, ref_trk, RESULTS_DIR)
-    argand_flight(rows, n_rig, RESULTS_DIR, log)
     for t in trk:
         r = t['row']
         if r is None:
@@ -1139,8 +1173,11 @@ def stability_step(mdl, rows_struct, log):
         log.info(f'  {cname[t["coord"]]}: {r["f"]:.2f} Hz, zeta {r["zeta"]:.3f}{za} '
                  f'(share {t["share"]:.2f}{"" if t["trusted"] else ", above trusted range"})')
     for r in rows:
-        if r['cat'] == 'flight':
-            log.info(f'  flight dynamics: {r["name"]} {r["f"]:.3f} Hz, zeta {r["zeta"]:.3f} ({r["content"]})')
+        if r.get('flight_id'):
+            log.info(f'  flight mode (identified in mode_contributions): {r["flight_id"]}, eig {r["eig"]}, '
+                     f'{r["s_corr"].imag / (2 * np.pi):.3f} Hz, zeta {r["zeta"]:.3f}')
+    n_other = sum(r['cat'] == 'flight' and not r.get('flight_id') for r in rows)
+    log.info(f'  {n_other} other rigid-dominated poles: not identified as flight modes (not named in tables or plots)')
     return rows, trk
 
 
@@ -1176,8 +1213,10 @@ def write_stability_tables(rows, trk, ref_trk, lin, outdir):
                   f'{fd:.2f} | {df:+.1f}% | {r["zeta"]:.3f} | {t["zeta_num_est"]:.4f} | {zref} | {zaer} | {t["share"]:.2f} | {note} |')
         csv.append(f'{t["coord"]},{t["modal"]},{t["f_struct"]:.4f},{r["f"]:.4f},{fd:.4f},{df:.2f},{r["zeta"]:.5f},'
                    f'{t["zeta_num_est"]:.5f},{zref},{zaer},{t["share"]:.3f},{t["trusted"]},{r["eig"]}')
-    md += ['', '## Flight-dynamics modes (labels are candidates from the dominant rigid state)', '',
-           '| Eig | Candidate | f_n (Hz) | f_d (Hz) | zeta | Re (1/s) | Content |', '|---|---|---|---|---|---|---|']
+    md += ['', '## Rigid-body poles', '',
+           'Flight-mode names come from mode_contributions_restructured.py (IDENTIFIED_FLIGHT_MODES), not from this '
+           'script. The other rigid-dominated poles are not identified as flight modes.', '',
+           '| Eig | Flight mode | f_n (Hz) | f_d (Hz) | zeta | Re (1/s) | Content |', '|---|---|---|---|---|---|---|']
     for r in sorted([r for r in rows if r['cat'] in ('flight', 'zero')], key=lambda r: r['f']):
         md.append(f'| {r["eig"]} | {r["name"]} | {r["f"]:.3f} | {r["s_corr"].imag / (2 * np.pi):.3f} | {r["zeta"]:.3f} | '
                   f'{r["s"].real:.3f} | {r["content"]} |')
@@ -1192,11 +1231,17 @@ def plot_family(r):
     return 'boom / tail'
 
 
+def ordinal(n):
+    return {1: '1st', 2: '2nd', 3: '3rd'}.get(n, f'{n}th')
+
+
 def short_mode_label(r):
-    """Compact label for a structural mode, e.g. '13: S wing torsion 1' (Modal mode number first)."""
+    """Label for a structural mode in the eigenvalue plots, e.g. 'Wing torsion (S, 1st)'.
+    The Modal mode number is left out (internal SHARPy numbering); S/A and the order go in brackets at the end."""
     grp = {'fuselage': 'boom', 'tailplane': 'tail'}.get(r['group'], r['group'])
-    fam = FAMILY_NAMES.get(r['group'], {}).get(r['family'], r['family']).replace(' bending', ' bend.')
-    return f'{r["mode"]}: {r["sym"]} {grp} {fam} {r["order"]}'
+    fam = FAMILY_NAMES.get(r['group'], {}).get(r['family'], r['family'])
+    sym = f'{r["sym"]}, ' if r.get('sym') in ('S', 'A') else ''
+    return f'{grp.capitalize()} {fam} ({sym}{ordinal(r["order"])})'
 
 
 def tag_eigenvalues(rows, trk, coord_modal, rows_struct):
@@ -1215,6 +1260,7 @@ def tag_eigenvalues(rows, trk, coord_modal, rows_struct):
         rs = by_mode.get(coord_modal[r['dom']])
         r['plot_family'] = plot_family(rs) if rs else 'not in Modal output'
         r['short'] = short_mode_label(rs) if rs else f'E{r["dom"] - 8} (not in Modal)'
+        r['modal_mode'] = coord_modal[r['dom']]           # Modal (undamped) mode number of the dominant coordinate
         r['paired'] = id(r) in paired
 
 
@@ -1233,7 +1279,7 @@ def conditions_line(lin, has_ref):
     parts.append('frequencies corrected for discrete-time compression' if UNWARP_FREQUENCIES else 'raw (uncorrected) frequencies')
     if not has_ref:
         parts.append('provisional: no low-density reference run')
-    return '  ·  '.join(parts)
+    return cm_safe('  ·  '.join(parts))
 
 
 def _spread_labels(ax, pts, obstacles=(), min_gap_pt=10.0, pad_pt=8.0, fontsize=7.5):
@@ -1272,7 +1318,7 @@ def _spread_labels(ax, pts, obstacles=(), min_gap_pt=10.0, pad_pt=8.0, fontsize=
 
 
 def _draw_eigs(ax, rows, trk, freq_struct, fmax, re_min=None, show_wake=True, label_elastic=True,
-               label_flight=False, diagnostic=False):
+               label_flight=False, diagnostic=False, show_unpaired=True):
     """Draw one eigenvalue panel. Height = damped frequency Im(lambda)/2pi; points filtered on that same value."""
     def inside(r):
         return -0.05 <= r['fd'] <= fmax and (re_min is None or r['re'] >= re_min)
@@ -1290,7 +1336,7 @@ def _draw_eigs(ax, rows, trk, freq_struct, fmax, re_min=None, show_wake=True, la
             continue
         ax.plot([0, r['re']], [t['f_struct'], r['fd']], color=LINK_COLOUR, lw=0.9, zorder=2)
 
-    el = [r for r in rows if r['cat'] == 'elastic' and inside(r)]
+    el = [r for r in rows if r['cat'] == 'elastic' and inside(r) and (show_unpaired or r['paired'])]
     for fam, col in FAMILY_COLOURS.items():
         p = [r for r in el if r['plot_family'] == fam and r['paired']]
         if p:
@@ -1304,7 +1350,7 @@ def _draw_eigs(ax, rows, trk, freq_struct, fmax, re_min=None, show_wake=True, la
     fl = [r for r in rows if r['cat'] == 'flight' and inside(r)]
     if fl:
         ax.scatter([r['re'] for r in fl], [r['fd'] for r in fl], s=58, marker='D', color=FLIGHT_COLOUR,
-                   edgecolor='white', linewidth=1.2, label='flight dynamics (candidates)', zorder=5)
+                   edgecolor='white', linewidth=1.2, label='rigid-body poles', zorder=5)
 
     ax.axvline(0, color=MUTED, lw=0.8, zorder=0)
     ax.set_ylim(-0.03 * fmax, fmax)
@@ -1315,9 +1361,7 @@ def _draw_eigs(ax, rows, trk, freq_struct, fmax, re_min=None, show_wake=True, la
         ax.set_xlim(1.5 * lo, max(0.5, -0.04 * lo))     # room for labels left of the leftmost points
     ax.set_xlabel(r'Real part, Re($\lambda$) (1/s)', color=MUTED)
     ax.set_ylabel(r'Damped frequency, Im($\lambda$)/2$\pi$ (Hz)', color=MUTED)
-    ax.grid(color=GRID, lw=0.6)
-    ax.spines[['top', 'right']].set_visible(False)
-    ax.tick_params(colors=MUTED)
+    paper_axes(ax)
 
     labels = []
     if label_elastic:
@@ -1328,9 +1372,10 @@ def _draw_eigs(ax, rows, trk, freq_struct, fmax, re_min=None, show_wake=True, la
                 labels.append((r['re'], r['fd'], f'eig {r["eig"]} (untracked, {r["plot_family"]})'))
     if label_flight:
         for r in fl:
-            name = r['name'] if diagnostic else \
-                r['name'].replace('?', '').replace(' (wake-coupled pair)', ', wake-coupled').strip() + ' (cand.)'
-            labels.append((r['re'], r['fd'], name))
+            if r.get('flight_id'):
+                labels.append((r['re'], r['fd'], r['flight_id']))
+            elif diagnostic:
+                labels.append((r['re'], r['fd'], f'eig {r["eig"]} (rigid, not identified)'))
     obstacles = [(r['re'], r['fd']) for r in el + fl]
     return labels, obstacles
 
@@ -1358,16 +1403,104 @@ def plot_root_locus_diagnostic(rows, trk, freq_struct, lin, has_ref, outdir):
     plt.close(fig)
 
 
+def _place_labels_paper(ax, pts, obstacles=(), min_gap_pt=8.5, pad_pt=8.0, fontsize=8.0, obs_gap_pt=7.0):
+    """Direct labels for the paper figure, left of each point. Pass 1 (top down): a label that clashes with nothing
+    stays at its point's height. Pass 2: the others go to the nearest clear height (searching up and down
+    alternately) with a thin leader line."""
+    if not pts:
+        return
+    fig = ax.figure
+    fig.canvas.draw()
+    to_pt = 72.0 / fig.dpi
+    left_pt = ax.get_window_extent().x0 * to_pt
+    obs = [tuple(ax.transData.transform(o) * to_pt) for o in obstacles]
+    items = []
+    for x, y, t in pts:
+        xd, yd = ax.transData.transform((x, y)) * to_pt
+        w = len(t) * fontsize * 0.48                     # approximate text width (pt)
+        side = -1 if xd - pad_pt - w > left_pt else 1
+        x0, x1 = (xd - pad_pt - w, xd - pad_pt) if side < 0 else (xd + pad_pt, xd + pad_pt + w)
+        items.append(dict(x=x, y=y, t=t, yd=yd, x0=x0, x1=x1, side=side, own=(xd, yd)))
+    items.sort(key=lambda i: -i['yd'])
+    placed = []
+
+    def clash(it, yl):
+        if any(abs(yl - py) < min_gap_pt and not (it['x1'] < px0 or it['x0'] > px1) for py, px0, px1 in placed):
+            return True
+        return any(abs(yl - oy) < obs_gap_pt and it['x0'] - 3 < ox < it['x1'] + 3
+                   for ox, oy in obs if (ox, oy) != it['own'])
+
+    later = []
+    for it in items:
+        if clash(it, it['yd']):
+            later.append(it)
+        else:
+            it['yl'] = it['yd']
+            placed.append((it['yl'], it['x0'], it['x1']))
+    for it in later:
+        d = 0.0
+        for k in range(1, 120):
+            d = 1.5 * ((k + 1) // 2) * (1 if k % 2 else -1)     # +1.5, -1.5, +3, -3, ...
+            if not clash(it, it['yd'] + d):
+                break
+        it['yl'] = it['yd'] + d
+        placed.append((it['yl'], it['x0'], it['x1']))
+    for it in items:
+        dy = it['yl'] - it['yd']
+        ann = ax.annotate(it['t'], (it['x'], it['y']), xytext=(it['side'] * pad_pt, dy), textcoords='offset points',
+                          ha='right' if it['side'] < 0 else 'left', va='center', fontsize=fontsize, color='k',
+                          zorder=6, arrowprops=dict(arrowstyle='-', color='0.45', lw=0.5, shrinkA=0, shrinkB=3)
+                          if abs(dy) > 2 else None)
+        ann.set_in_layout(False)
+
+
+PAPER_LEGEND = {'structural modes, no aero (Modal)': 'Undamped modes',
+                'elastic: wing bending': 'Wing bending',
+                'elastic: wing torsion': 'Wing torsion',
+                'elastic: boom / tail': 'Boom / tail',
+                'elastic, not tracked to a Modal mode': 'Elastic root',
+                'rigid-body poles': 'Rigid-body poles',
+                'aerodynamic (wake) states': 'Aerodynamic (wake) states'}
+
+
+def plot_elastic_zoom_paper(rows, trk, freq_struct, lin, outdir):
+    """Low-frequency elastic eigenvalues in the paper style of the clean mode-shape plots (paper_rc: Computer
+    Modern, inward ticks on all sides, no grid). Thin grey lines join each structural mode (tick on the imaginary
+    axis) to the aeroelastic eigenvalue tracked from it. Saved as PDF (vector) and PNG."""
+    with plt.rc_context(paper_rc()):
+        fig, ax = plt.subplots(figsize=(PAPER_FIG_WIDTH_IN, 0.62 * PAPER_FIG_WIDTH_IN))
+        labels, obs = _draw_eigs(ax, rows, trk, freq_struct, ELASTIC_ZOOM_FMAX, show_wake=SHOW_WAKE_STATES,
+                                 show_unpaired=False)
+        ax.axvline(0, color='0.6', lw=0.5, zorder=0)
+        ax.set_xlabel(r'Real part, $\mathrm{Re}(\lambda)$ (s$^{-1}$)', color='k')
+        ax.set_ylabel(r'Damped frequency, $\mathrm{Im}(\lambda)/2\pi$ (Hz)', color='k')
+        # Modal (undamped) mode number at the end of each label, e.g. 'Wing torsion (S, 1st), mode 13'
+        num = {(r['re'], r['fd']): r.get('modal_mode') for r in rows if r['cat'] == 'elastic'}
+        labels = [(x, y, t + (f', mode {num[(x, y)]}' if num.get((x, y)) is not None else ''))
+                  for x, y, t in labels]
+        _place_labels_paper(ax, labels, obs, fontsize=PAPER_FONT_PT - 1)
+        h, l = ax.get_legend_handles_labels()
+        ax.legend(h, [PAPER_LEGEND.get(x, x) for x in l], loc='upper center', bbox_to_anchor=(0.5, -0.16),
+                  ncol=3, frameon=False, handletextpad=0.4, columnspacing=1.4)
+        u = f'{lin["u_inf"]:g}' if lin.get('u_inf') else '?'
+        ax.set_title(f'Aeroelastic eigenvalues at $V = {u}$ m/s: elastic modes up to {ELASTIC_ZOOM_FMAX:g} Hz',
+                     fontsize=PAPER_FONT_PT + 1, pad=4)
+        for ext in ('pdf', 'png'):
+            fig.savefig(os.path.join(outdir, f'aeroelastic_eigenvalues_elastic_zoom.{ext}'), dpi=300)
+        plt.close(fig)
+
+
 def plot_eigenvalues_clean(rows, trk, freq_struct, lin, has_ref, outdir):
     """Three separate presentation figures: trusted range, low-frequency elastic zoom, flight-dynamics zoom.
     Legend sits outside the axes on the right; conditions line under the title."""
     f_tr = trusted_fmax(lin)
-    parts = conditions_line(lin, has_ref).split('  ·  ')
-    sub = '  ·  '.join(parts[:4]) + '\n' + '  ·  '.join(parts[4:])
+    parts = conditions_line(lin, has_ref).split(cm_safe('  ·  '))
+    sep = cm_safe('  ·  ')
+    sub = sep.join(parts[:4]) + '\n' + sep.join(parts[4:])
 
     def finish(fig, ax, title, fname):
         ax.legend(fontsize=8, frameon=False, loc='upper left', bbox_to_anchor=(1.02, 1.0))
-        ax.set_title(title, loc='left', fontsize=11.5, color=INK, pad=40)
+        ax.set_title(cm_safe(title), loc='left', fontsize=11.5, color=INK, pad=40)
         ax.text(0, 1.012, sub, transform=ax.transAxes, fontsize=7.5, color=MUTED, ha='left', va='bottom',
                 linespacing=1.4)
         fig.tight_layout()
@@ -1376,39 +1509,40 @@ def plot_eigenvalues_clean(rows, trk, freq_struct, lin, has_ref, outdir):
 
     # 1. Trusted range
     fig, ax = plt.subplots(figsize=(11, 7.4))
-    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, f_tr, show_wake=SHOW_WAKE_STATES)
+    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, f_tr, show_wake=SHOW_WAKE_STATES, show_unpaired=False)
     _spread_labels(ax, labels, obs)
     finish(fig, ax, f'Aeroelastic eigenvalues, 0 - {f_tr:.0f} Hz (trusted range)', 'aeroelastic_eigenvalues_full.png')
 
-    # 2. Low-frequency elastic zoom
-    fig, ax = plt.subplots(figsize=(11, 6.4))
-    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, ELASTIC_ZOOM_FMAX, show_wake=SHOW_WAKE_STATES)
-    _spread_labels(ax, labels, obs)
-    finish(fig, ax, f'Low-frequency elastic modes, 0 - {ELASTIC_ZOOM_FMAX:g} Hz',
-           'aeroelastic_eigenvalues_elastic_zoom.png')
+    # 2. Low-frequency elastic zoom - paper (LaTeX) style, same look as the clean mode-shape plots
+    plot_elastic_zoom_paper(rows, trk, freq_struct, lin, outdir)
 
-    # 3. Flight dynamics, with an inset for the slow modes near the origin
-    fig, ax = plt.subplots(figsize=(11, 6.4))
-    labels, obs = _draw_eigs(ax, rows, trk, freq_struct, FLIGHT_ZOOM['fmax'], re_min=FLIGHT_ZOOM['re_min'],
-                             show_wake=SHOW_WAKE_STATES, label_flight=True)
-    slow = [l for l in labels if l[0] > -1.0 and l[1] < 0.6]
-    ins = ax.inset_axes([0.62, 0.36, 0.34, 0.40])
-    sl = [r for r in rows if r['cat'] == 'flight' and r['re'] > -1.0 and -0.05 <= r['fd'] < 0.6]
-    ins.scatter([r['re'] for r in sl], [r['fd'] for r in sl], s=50, marker='D', color=FLIGHT_COLOUR,
-                edgecolor='white', linewidth=1.2, zorder=5)
-    ins.axvline(0, color=MUTED, lw=0.8)
-    ins.set_xlim(-0.65, 0.12)
-    ins.set_ylim(-0.04, 0.55)
-    ins.grid(color=GRID, lw=0.6)
-    ins.tick_params(colors=MUTED, labelsize=7)
-    ins.set_title('slow modes near the origin', fontsize=7.5, color=MUTED, loc='left')
-    for x, y, t in slow:
-        left_half = x < 0.5 * ins.get_xlim()[0]          # label to the right if the point is in the left half
-        ins.annotate(t, (x, y), xytext=(6 if left_half else -6, 5), textcoords='offset points',
-                     ha='left' if left_half else 'right', fontsize=7.5, color=INK)
-    ax.indicate_inset_zoom(ins, edgecolor=MUTED, alpha=0.6)
-    _spread_labels(ax, [l for l in labels if l not in slow], obs)
-    finish(fig, ax, f'Flight-dynamics modes, 0 - {FLIGHT_ZOOM["fmax"]:g} Hz', 'aeroelastic_eigenvalues_flight.png')
+    # 3. Flight dynamics: compact paper-style figure, axes scaled to the identified flight modes
+    fl = [r for r in rows if r['cat'] == 'flight' and r.get('flight_id')]
+    if not fl:                                            # nothing identified for this case: fall back to all rigid-body poles
+        fl = [r for r in rows if r['cat'] == 'flight']
+    if fl:
+        re_lo = min(r['re'] for r in fl)
+        f_hi = max(r['fd'] for r in fl)
+        pad_x = 0.15 * max(-re_lo, 0.05)                  # 15 % margin beyond the most damped pole
+        x0, x1 = re_lo - pad_x, pad_x
+        f_max = 1.25 * max(f_hi, 0.02)                    # 25 % headroom above the highest mode
+    else:
+        x0, x1, f_max = FLIGHT_ZOOM['re_min'], 0.5, FLIGHT_ZOOM['fmax']
+    with plt.rc_context(paper_rc()):
+        fig, ax = plt.subplots(figsize=(0.75 * PAPER_FIG_WIDTH_IN, 0.5 * PAPER_FIG_WIDTH_IN))
+        labels, obs = _draw_eigs(ax, rows, trk, freq_struct, f_max, re_min=x0,
+                                 show_wake=SHOW_WAKE_STATES, label_flight=True, show_unpaired=False)
+        ax.set_xlim(x0, x1)                               # _draw_eigs sets a right margin of 0.5 1/s: too wide here
+        ax.set_ylim(-0.06 * f_max, f_max)
+        ax.set_xlabel(r'Real part, $\mathrm{Re}(\lambda)$ (s$^{-1}$)')
+        ax.set_ylabel(r'Damped frequency, $\mathrm{Im}(\lambda)/2\pi$ (Hz)')
+        _place_labels_paper(ax, labels, obs, fontsize=PAPER_FONT_PT)
+        n_unid = sum(r['cat'] == 'flight' and not r.get('flight_id') and x0 <= r['re'] <= x1 and r['fd'] <= f_max
+                     for r in rows)                   # unnamed rigid-body poles in view: say so in the title
+        ax.set_title('Identified flight modes' + (f' ({n_unid} other rigid-body poles, not identified)' if n_unid else ''), loc='left', fontsize=PAPER_FONT_PT + 1, pad=4)
+        for ext in ('pdf', 'png'):
+            fig.savefig(os.path.join(outdir, f'aeroelastic_eigenvalues_flight.{ext}'), dpi=300)
+        plt.close(fig)
 
 
 def plot_damping(trk, ref_trk, outdir):
@@ -1432,55 +1566,11 @@ def plot_damping(trk, ref_trk, outdir):
                         for t in tt],
                        fontsize=8, color=INK)
     ax.set_xlabel('Damping ratio (pale bars: above the trusted frequency range)', color=MUTED)
-    ax.grid(axis='x', color=GRID, lw=0.6); ax.spines[['top', 'right']].set_visible(False); ax.tick_params(colors=MUTED)
+    paper_axes(ax)
     ax.legend(fontsize=8, frameon=False, loc='lower right')
-    ax.set_title(f'{CASE_NAME}: damping of each structural mode with aerodynamics', loc='left', fontsize=11, color=INK)
+    ax.set_title(cm_safe(f'{CASE_NAME}: damping of each structural mode with aerodynamics'), loc='left', fontsize=11, color=INK)
     fig.tight_layout()
     fig.savefig(os.path.join(outdir, 'aeroelastic_damping.png'), dpi=150)
-    plt.close(fig)
-
-
-def argand_flight(rows, n_rig, outdir, log):
-    """Argand diagrams of the rigid-state content of each flight-dynamics mode (complex, so phase is real now)."""
-    fl = sorted([r for r in rows if r['cat'] == 'flight'], key=lambda r: r['f'])
-    if not fl:
-        return
-    names = LIN_RIGID_NAMES[n_rig]
-    colours = dict(zip(names, COL + ['#8c564b', '#4b5563', '#9ca3af']))
-    ncol = min(4, len(fl)); nrow = int(np.ceil(len(fl) / ncol))
-    fig, axs = plt.subplots(nrow, ncol, figsize=(3.6 * ncol, 3.9 * nrow + 1.0))
-    axs = np.atleast_1d(axs).ravel()
-    t = np.linspace(0, 2 * np.pi, 200)
-    for ax, r in zip(axs, fl):
-        z = r['q'][:n_rig]
-        k = int(np.argmax(np.abs(z)))
-        zn = z / z[k]
-        ax.set_aspect('equal')
-        for dec in range(ARGAND_DECADES):
-            rr = 1 - dec / ARGAND_DECADES
-            ax.plot(rr * np.cos(t), rr * np.sin(t), color=GRID, lw=0.8)
-            ax.text(rr * np.cos(np.radians(60)), rr * np.sin(np.radians(60)), f'{10.0 ** -dec:g}', fontsize=6.5, color=MUTED)
-        ax.axhline(0, color=GRID, lw=0.8); ax.axvline(0, color=GRID, lw=0.8)
-        ax.set_xlim(-1.45, 1.45); ax.set_ylim(-1.45, 1.45); ax.set_xticks([]); ax.set_yticks([])
-        for j in sorted(range(n_rig), key=lambda j: -abs(zn[j])):
-            if abs(zn[j]) < 10.0 ** -ARGAND_DECADES:
-                continue
-            rad = 1 + np.log10(abs(zn[j])) / ARGAND_DECADES
-            c = rad * np.exp(1j * np.angle(zn[j]))
-            ax.annotate('', xy=(c.real, c.imag), xytext=(0, 0),
-                        arrowprops=dict(arrowstyle='-|>', color=colours[names[j]], lw=2, mutation_scale=10))
-            ax.text(c.real * 1.08, c.imag * 1.08, f'{names[j]} {abs(zn[j]):.2g}\n{np.degrees(np.angle(zn[j])):+.0f} deg',
-                    fontsize=7, color=INK, ha='left' if c.real >= 0 else 'right', va='center')
-        for sp in ax.spines.values():
-            sp.set_color(GRID)
-        ax.set_title(f'{r["name"]}  eig {r["eig"]}\n{r["f"]:.3f} Hz, zeta {r["zeta"]:.3f}', fontsize=9, color=INK, loc='left')
-    for ax in axs[len(fl):]:
-        ax.axis('off')
-    fig.suptitle(f'{CASE_NAME}: flight-dynamics mode content (rigid modal coordinates, CG / principal axes; '
-                 f'u,v,w m/s, p,q,r rad/s, phi,theta,psi rad; log radius, largest state = 1 at 0 deg)',
-                 fontsize=10, color=INK, x=0.01, ha='left')
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
-    fig.savefig(os.path.join(outdir, 'flight_dynamics_argand.png'), dpi=150)
     plt.close(fig)
 
 
@@ -1494,6 +1584,10 @@ def list_vtk(outdir, log):
 
 # =====================================================================================
 def main():
+    rc = paper_rc()
+    rc['text.usetex'] = False
+    plt.rcParams.update(rc)
+
     os.makedirs(RESULTS_DIR, exist_ok=True)
     log = Log()
     case = load_case()
