@@ -67,7 +67,8 @@ import llta_geometry as llta
 # Point this at any .data.h5 that has a saved 'Modal' step (same file you used
 # for REF_POS in run_derivative.py works fine). Leave as None and fill in
 # X_CG_MANUAL instead if you'd rather type the number in directly.
-H5_FILE = "/Users/icc25/sharpy_cases/LLTA/output/llta_model_audit/savedata/llta_model_audit.data.h5"
+#H5_FILE = "/Users/icc25/sharpy_cases/LLTA/output/llta_model_audit/savedata/llta_model_audit.data.h5"
+H5_FILE = "/Users/icc25/sharpy_cases/LLTA/output/llta_9ms_aeroelastic_unclamped_2/savedata/llta_9ms_aeroelastic_unclamped_2.data.h5"
 X_CG_MANUAL = None   # e.g. 0.23810025 -- used only if H5_FILE is None
 
 # --- Wing planform: pick ONE mode -------------------------------------------

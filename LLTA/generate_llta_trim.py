@@ -8,7 +8,7 @@ import math
 import sharpy.sharpy_main 
 import argparse
 
-case_name = 'llta_9ms_aeroelastic_unclamped_linear_control'
+case_name = 'llta_9ms_aeroelastic_unclamped_split_payload_moved'
 route = os.path.dirname(os.path.realpath(__file__)) + '/'
 
 #Added for doing a u_inf sweep (but trim position might be different???)
@@ -175,17 +175,31 @@ m_bar_tail = llta.m_bar_tail
 #j_bar_tail = 1600 * ((np.pi / 32) * ((0.01414**4)-(0.01176**4))) # SPAR J -> material density * (pi/32)*(OD^4-ID^4) rotational inertia per unit length (all three rotational DOFs), was carried over from generate_hale -> 0.08 (not correct) 
 
 # lumped masses
-n_lumped_mass = 7
+n_lumped_mass = 8 # was 7, before payload movement investigation (total payload bay is split into 2, see below)
+d = 0.2 # m, fore/aft offset of each payload half
+
 lumped_mass_nodes = np.zeros((n_lumped_mass,), dtype=int)
 lumped_mass = np.zeros((n_lumped_mass,))
 lumped_mass_position = np.zeros((n_lumped_mass, 3))
 lumped_mass_inertia = np.zeros((n_lumped_mass, 3, 3))
 
 # lumped masses - payload bay (node 0)
-lumped_mass_nodes[0] = 0 # attached to node 0
-lumped_mass[0] = llta.mass_prop + llta.mass_batteries + llta.mass_pixhawk # Prop, batteries, pixhawk
-lumped_mass_position[0] = llta.payload_bay # Offset position of payload (forward of node 0, so -ve y axis), average of positions
-lumped_mass_inertia[0] = np.diag([3.46e-3, 1.07e-3, 3.49e-3]) # Pre-split of avionics = np.diag([0.001179, 0.005401, 0.005436]) # Combined forward fuselage — propeller + battery + electronics. Parallel axis theorem applied to combined CG at x = -0.2384 m
+#lumped_mass_nodes[0] = 0 # attached to node 0
+#lumped_mass[0] = llta.mass_prop + llta.mass_batteries + llta.mass_pixhawk # Prop, batteries, pixhawk
+#lumped_mass_position[0] = llta.payload_bay # Offset position of payload (forward of node 0, so -ve y axis), average of positions
+#lumped_mass_inertia[0] = np.diag([3.46e-3, 1.07e-3, 3.49e-3]) # Pre-split of avionics = np.diag([0.001179, 0.005401, 0.005436]) # Combined forward fuselage — propeller + battery + electronics. Parallel axis theorem applied to combined CG at x = -0.2384 m
+
+# SPLIT PAYLOAD MASS (alternative to above block)
+payload_m = llta.mass_prop + llta.mass_batteries + llta.mass_pixhawk
+payload_I = np.diag([3.46e-3, 1.07e-3, 3.49e-3])
+lumped_mass[0] = payload_m / 2
+lumped_mass_position[0] = [0, llta.payload_bay[1] + d, 0]
+lumped_mass_inertia[0] = payload_I / 2
+
+lumped_mass_nodes[7] = 0
+lumped_mass[7] = payload_m / 2
+lumped_mass_position[7] = [0, llta.payload_bay[1] - d, 0]
+lumped_mass_inertia[7] = payload_I / 2
 
 # lumped masses - additional avionics (node 0)
 lumped_mass_nodes[1] = 0 # attached to node 0
@@ -940,7 +954,12 @@ def generate_solver_file():
                                   'wake_shape_generator': 'StraightWake',
                                   'wake_shape_generator_input': {'u_inf': u_inf,
                                                                  'u_inf_direction': ['1', '0', '0'],
-                                                                 'dt': dt}}
+                                                                 'dt': dt}
+                                  #'control_surface': XXX,
+                                  #'control_surface_chord': XXX,
+                                  #'control_surface_hinge_coord': XXX, #OPTIONAL
+                                  #'control_surface_deflection': XXX,
+                                }
 
     settings['NonLinearStatic'] = {'print_info': 'off',
                                    'max_iterations': 150, # 200 in Horton example for asymptotic stability
@@ -985,6 +1004,7 @@ def generate_solver_file():
                               'initial_alpha': alpha,
                               'initial_deflection': cs_deflection,
                               'initial_thrust': thrust,
+                              #'thrust_nodes': XXX,
                               'save_info': True} # Horton example has additional settings defined:  'max_iter': 200, 'fz_tolerance': 1e-2, 'fx_tolerance': 1e-2,'m_tolerance': 1e-2}
 
     settings['NonLinearDynamicCoupledStep'] = {'print_info': 'off',
@@ -1102,7 +1122,7 @@ def generate_solver_file():
                                        'beam_settings': {'modal_projection': True,
                                                          'inout_coords': 'modes', # was 'nodes', set to 'modes' in Horton example
                                                          'discrete_time': True,
-                                                         'newmark_damp': 0.005, # was 0.05, set to 0.005 in Horton example
+                                                         'newmark_damp': 5e-3, # was 0.05, set to 0.005 in Horton example
                                                          'discr_method': 'newmark',
                                                          'dt': dt,
                                                          'proj_modes': 'undamped',
@@ -1116,7 +1136,10 @@ def generate_solver_file():
                                                          'density': rho,
                                                          'remove_predictor': False,
                                                          'use_sparse': 'off', # Was True, set to 'off' in Horton example
-                                                         'remove_inputs': ['u_gust']},
+                                                         #'remove_inputs': ['u_gust'],
+                                                         'gust_assembler': 'LeadingEdge', # This is one span-uniform input u_gust, 'MultiLeadingEdge' is the other option and needs 'span_location'
+                                                         },
+                                       #'retain_output': XXX,
                                        'track_body': 'on', # Added setting in Horton example
                                        'use_euler': 'on', # Added setting in Horton example
                                    }}
